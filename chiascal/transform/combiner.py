@@ -6,12 +6,13 @@ Created on Thu Feb 10 13:54:06 2022
 """
 import numpy as np
 import pandas as pd
+from scipy.stats import chi2_contingency, entropy
 from itertools import (chain, product, combinations)
 from joblib import Parallel, delayed, dump, load
 
 from .basebinner import BaseBinner
 from .utils import (
-    gen_cut, gen_cross, is_y_zero, cut_adjust, merge_arr_by_idx, arr_badrate_shape, apply_woe, apply_cut_bin, merge_lowpct_zero,
+    gen_cut, gen_cross, is_y_zero, cut_adjust, merge_arr_by_idx, arr_badrate_shape, calc_woe, calc_min_tol, apply_woe, apply_cut_bin, merge_lowpct_zero,
     make_tqdm_iterator, parallel_gen_var_bin,
     woe_list2dict, gen_var_bin)
 
@@ -95,7 +96,7 @@ def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
     """生成合并结果."""
     # 根据选取的切点合并列联表
     t_arr = np.ma.compress_rows(arr)
-    na_arr = arr.data[arr.mask]
+    na_arr = np.expand_dim(arr.data[arr.mask], axis=0)
     merged_arr = merge_arr_by_idx(t_arr, merge_idxs)
     shape = arr_badrate_shape(merged_arr)
     # badrate的形状符合先验形状的分箱方式保留下来
@@ -107,14 +108,15 @@ def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
     else:
         if merged_arr.shape[0] < U_min:
             return
-    detail = calwoe(merged_arr, arr_na)
+    masked_arr = np.concatenate((merged_arr, na_arr), axis=0)
+    detail = calc_woe(masked_arr)
     woes = detail['WOE']
-    tol = cal_min_tol(woes[:-1])
+    tol = calc_min_tol(woes[:-1])
     if tol <= tolerance:
         return
     chi, p, dof, expFreq =\
-        sps.chi2_contingency(merged_arr, correction=False)
-    var_entropy = sps.entropy(detail['all_num'][:-1])
+        chi2_contingency(merged_arr, correction=False)
+    var_entropy = entropy(detail['all_num'][:-1])
     var_bin_ = {
         'detail': detail, 'flogp': -np.log(max(p, 1e-5)), 'tolerance': tol,
         'entropy': var_entropy, 'shape': shape, 'bin_cnt': len(merged_arr),

@@ -327,7 +327,7 @@ def merge_lowpct_zero(arr, cut, threshold_PCT=0.03, threshold_n=None):
         合并调整后的cut
     """
     t_arr = np.ma.compress_rows(arr)
-    na_arr = arr.data[arr.mask]
+    na_arr = np.expand_dim(arr.data[arr.mask], axis=0)
     t_arr, idxlist = merge_zeronum(t_arr)
     cut = cut_adjust(cut, idxlist)
     if threshold_n is not None:
@@ -339,10 +339,10 @@ def merge_lowpct_zero(arr, cut, threshold_PCT=0.03, threshold_n=None):
     return np.concatenate((t_arr, na_arr), axis=0), cut
 
 
-def calwoe(arr, arr_na, precision=4, modify=True):
+def calc_woe(arr, precision=4, modify=True):
     """计算WOE、IV及分箱细节."""
     warnings.filterwarnings('ignore')
-    arr = np.append(arr, arr_na, axis=0)
+    arr = arr.data
     col_margin = arr.sum(axis=0)
     row_margin = arr.sum(axis=1)
     event_rate = arr[:, 1] / row_margin
