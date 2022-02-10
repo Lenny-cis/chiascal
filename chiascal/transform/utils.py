@@ -304,7 +304,7 @@ def merge_zeronum(arr):
     return arr, sorted(idxlist)
 
 
-def merge_lowpct_zero(arr, cut, thrd_PCT=0.03, thrd_n=None):
+def merge_lowpct_zero(arr, cut, threshold_PCT=0.03, threshold_n=None):
     """
     合并地占比和0的箱.
 
@@ -326,15 +326,17 @@ def merge_lowpct_zero(arr, cut, thrd_PCT=0.03, thrd_n=None):
     cut: list
         合并调整后的cut
     """
-    arr, idxlist = merge_zeronum(arr)
+    t_arr = np.ma.compress_rows(arr)
+    na_arr = arr.data[arr.mask]
+    t_arr, idxlist = merge_zeronum(t_arr)
     cut = cut_adjust(cut, idxlist)
-    if thrd_n is not None:
-        arr, idxlist = merge_fewnum(arr, thrd_n)
+    if threshold_n is not None:
+        t_arr, idxlist = merge_fewnum(t_arr, threshold_n)
         cut = cut_adjust(cut, idxlist)
-        return arr, cut
-    arr, idxlist = merge_lowpct(arr, thrd_PCT)
+        return np.concatenate((t_arr, na_arr), axis=0), cut
+    t_arr, idxlist = merge_lowpct(t_arr, threshold_PCT)
     cut = cut_adjust(cut, idxlist)
-    return arr, cut
+    return np.concatenate((t_arr, na_arr), axis=0), cut
 
 
 def calwoe(arr, arr_na, precision=4, modify=True):

@@ -4,17 +4,19 @@ Created on Thu Feb 10 13:54:06 2022
 
 @author: linjianing
 """
+import numpy as np
+import pandas as pd
 from itertools import (chain, product, combinations)
 from joblib import Parallel, delayed, dump, load
 
 from .basebinner import BaseBinner
 from .utils import (
-    gen_cut, gen_cross, is_y_zero, cut_adjust, apply_woe, apply_cut_bin, merge_lowpct_zero,
+    gen_cut, gen_cross, is_y_zero, cut_adjust, merge_arr_by_idx, arr_badrate_shape, apply_woe, apply_cut_bin, merge_lowpct_zero,
     make_tqdm_iterator, parallel_gen_var_bin,
     woe_list2dict, gen_var_bin)
 
 
-def gen_comb_bins(crs, crs_na, cut, I_min, U_min, var_shape, max_bin_cnt,
+def gen_comb_bins(crs, cut, I_min, U_min, var_shape, max_bin_cnt,
                   tolerance, n_jobs):
     def comb_comb(hulkheads, loops):
         for loop in loops:
@@ -41,7 +43,7 @@ def gen_comb_bins(crs, crs_na, cut, I_min, U_min, var_shape, max_bin_cnt,
     bcs = comb_comb(hulkhead_list, loops_)
     # 多核并行计算
     var_bins = parallel_gen_var_bin(
-        bcs, crs, crs_na, minnum_bin_I, minnum_bin_U, vs, tol, cut, n_jobs)
+        bcs, crs, minnum_bin_I, minnum_bin_U, vs, tol, cut, n_jobs)
     var_bin_dic = {k: v for k, v in enumerate(var_bins) if v is not None}
     return var_bin_dic
 
@@ -56,30 +58,31 @@ def varbin(x, y, var_type, cut_cnt, cut_method, precision, threshold_PCT,
     cross, cut = gen_cross(x, y, cut)
     if is_y_zero(cross):
         return {}
-    crs = cross.loc[cross.index != -1, :].values
-    crs_na = cross.loc[cross.index == -1, :].values
+    mask=np.zeros_like(cross)
+    mask[-1, :] = 1
+    crs = np.ma.array(cross.to_numpy(), mask=mask)
     crs, cut = merge_lowpct_zero(crs, cut, threshold_PCT, threshold_n)
-    bin_dic = gen_comb_bins(crs, crs_na, cut, I_min, U_min, var_shape,
+    bin_dic = gen_comb_bins(crs, cut, I_min, U_min, var_shape,
                             max_bin_cnt, tolerance)
     return bin_dic
 
 
-def parallel_gen_var_bin(bcs, arr, arr_na, I_min, U_min,
+def parallel_gen_var_bin(bcs, arr, I_min, U_min,
                          variable_shape, tolerance, cut, n_jobs):
     """使用多核计算."""
     bcs = list(chain.from_iterable(bcs))
     tqdm_options = {'iterable': bcs, 'disable': False}
     progress_bar = make_tqdm_iterator(**tqdm_options)
     var_bins = Parallel(n_jobs=n_jobs)(delayed(gen_var_bin)(
-        arr, arr_na, merge_idxs, I_min, U_min, variable_shape, tolerance, cut)
+        arr, merge_idxs, I_min, U_min, variable_shape, tolerance, cut)
         for merge_idxs in progress_bar)
     return var_bins
 
 
-def gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
+def gen_var_bin(arr, merge_idxs, I_min, U_min, variable_shape,
                 tolerance, cut):
     """计算变量分箱结果."""
-    var_bin = gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min,
+    var_bin = gen_merged_bin(arr, merge_idxs, I_min, U_min,
                              variable_shape, tolerance)
     cut = cut_adjust(cut, merge_idxs)
     if var_bin is not None:
@@ -87,11 +90,13 @@ def gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
     return var_bin
 
 
-def gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
+def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
                    tolerance):
     """生成合并结果."""
     # 根据选取的切点合并列联表
-    merged_arr = merge_arr_by_idx(arr, merge_idxs)
+    t_arr = np.ma.compress_rows(arr)
+    na_arr = arr.data[arr.mask]
+    merged_arr = merge_arr_by_idx(t_arr, merge_idxs)
     shape = arr_badrate_shape(merged_arr)
     # badrate的形状符合先验形状的分箱方式保留下来
     if pd.isna(shape) or (shape not in variable_shape):
