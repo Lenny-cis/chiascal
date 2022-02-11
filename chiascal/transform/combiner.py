@@ -9,12 +9,31 @@ import pandas as pd
 from scipy.stats import chi2_contingency, entropy
 from itertools import (chain, product, combinations)
 from joblib import Parallel, delayed, dump, load
+from sklearn.base import BaseEstimator, TransformerMixin
 
-from .basebinner import BaseBinner
+from .cutter import Cutter
 from .utils import (
-    gen_cut, gen_cross, is_y_zero, cut_adjust, merge_arr_by_idx, arr_badrate_shape, calc_woe, calc_min_tol, apply_woe, apply_cut_bin, merge_lowpct_zero,
-    make_tqdm_iterator, parallel_gen_var_bin,
-    woe_list2dict, gen_var_bin)
+    gen_cut, gen_cross, is_y_zero, cut_adjust, merge_arr_by_idx,
+    arr_badrate_shape, calc_woe, calc_min_tol, merge_lowpct_zero,
+    make_tqdm_iterator)
+
+
+class BaseBinner(TransformerMixin, BaseEstimator):
+    """探索性分箱."""
+
+    def __init__(self, cut_cnt=50, min_PCT=0.025, min_n=None,
+                 max_bin_cnt=6, I_min=3, U_min=4, cut_method='eqqt',
+                 tolerance=0, n_jobs=-1):
+        self.cut_cnt = cut_cnt
+        self.min_PCT = min_PCT
+        self.min_n = min_n
+        self.max_bin_cnt = max_bin_cnt
+        self.I_min = I_min
+        self.U_min = U_min
+        self.cut_method = cut_method
+        self.tolerance = tolerance
+        self.n_jobs = n_jobs
+        self.bins_set = {}
 
 
 def gen_comb_bins(crs, cut, I_min, U_min, var_shape, max_bin_cnt,
@@ -36,51 +55,32 @@ def gen_comb_bins(crs, cut, I_min, U_min, var_shape, max_bin_cnt,
     else:
         minnum_bin = min(minnum_bin_I, minnum_bin_U)
     rawnum_bin = cross.shape[0]
-    hulkhead_list = list(range(1, cross.shape[0]))
+    bulkhead_list = list(range(1, cross.shape[0]))
     # 限定分组数的上下限
-    maxnum_hulkhead_loops = max(rawnum_bin - minnum_bin, 0)
-    minnum_hulkhead_loops = max(rawnum_bin - maxnum_bin, 0)
-    loops_ = range(minnum_hulkhead_loops, maxnum_hulkhead_loops)
-    bcs = comb_comb(hulkhead_list, loops_)
+    maxnum_bulkhead_loops = max(rawnum_bin - minnum_bin, 0)
+    minnum_bulkhead_loops = max(rawnum_bin - maxnum_bin, 0)
+    loops_ = range(minnum_bulkhead_loops, maxnum_bulkhead_loops)
+    bcs = comb_comb(bulkhead_list, loops_)
     # 多核并行计算
-    var_bins = parallel_gen_var_bin(
+    var_bins = parallel_gen_bulkhead_bin(
         bcs, crs, minnum_bin_I, minnum_bin_U, vs, tol, cut, n_jobs)
     var_bin_dic = {k: v for k, v in enumerate(var_bins) if v is not None}
     return var_bin_dic
 
 
-def varbin(x, y, var_type, cut_cnt, cut_method, precision, threshold_PCT,
-           threshold_n, I_min, U_min, var_shape, max_bin_cnt, tolerance):
-    """单变量训练."""
-    if x.dropna().nunique() <= 1:
-        return {}
-    cut = gen_cut(x, n=cut_cnt, method=cut_method,
-                  precision=precision)
-    cross, cut = gen_cross(x, y, cut)
-    if is_y_zero(cross):
-        return {}
-    mask=np.zeros_like(cross)
-    mask[-1, :] = 1
-    crs = np.ma.array(cross.to_numpy(), mask=mask)
-    crs, cut = merge_lowpct_zero(crs, cut, threshold_PCT, threshold_n)
-    bin_dic = gen_comb_bins(crs, cut, I_min, U_min, var_shape,
-                            max_bin_cnt, tolerance)
-    return bin_dic
-
-
-def parallel_gen_var_bin(bcs, arr, I_min, U_min,
+def parallel_gen_bulkhead_bin(bcs, arr, I_min, U_min,
                          variable_shape, tolerance, cut, n_jobs):
     """使用多核计算."""
     bcs = list(chain.from_iterable(bcs))
     tqdm_options = {'iterable': bcs, 'disable': False}
     progress_bar = make_tqdm_iterator(**tqdm_options)
-    var_bins = Parallel(n_jobs=n_jobs)(delayed(gen_var_bin)(
+    var_bins = Parallel(n_jobs=n_jobs)(delayed(gen_bulkhead_bin)(
         arr, merge_idxs, I_min, U_min, variable_shape, tolerance, cut)
         for merge_idxs in progress_bar)
     return var_bins
 
 
-def gen_var_bin(arr, merge_idxs, I_min, U_min, variable_shape,
+def gen_bulkhead_bin(arr, merge_idxs, I_min, U_min, variable_shape,
                 tolerance, cut):
     """计算变量分箱结果."""
     var_bin = gen_merged_bin(arr, merge_idxs, I_min, U_min,
@@ -124,16 +124,76 @@ def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
         }
     return var_bin_
 
+
+def calc_sort_bins(bins_dic):
+    """计算排序的指标值."""
+    def _normalize(x):
+        x_min = x.min()
+        x_max = x.max()
+        return (x - x_min)/(x_max - x_min)
+
+    if len(bins_dic) == 0:
+        return {}
+    bins = pd.DataFrame.from_dict(bins_dic, orient='index')
+    norm_iv = _normalize(bins.loc[:, 'IV'])
+    norm_e = _normalize(bins.loc[:, 'entropy'])
+    bins.loc[:, 'ivae'] = np.hypot(norm_iv, norm_e)
+    return bins.to_dict(orient='index')
+
+
 class Combiner(BaseBinner):
     """全组合."""
 
-    def __init__(self, cut_cnt=50, thrd_PCT=0.025, thrd_n=None,
-                 max_bin_cnt=6, I_min=3, U_min=4, cut_mthd='eqqt',
-                 tolerance=0, n_jobs=-1):
-        super(cut_cnt, thrd_PCT, thrd_n, max_bin_cnt, I_min, U_min, cut_mthd,
+    def __init__(self, cut_cnt=50, min_PCT=0.025, min_n=None,
+                 max_bin_cnt=6, I_min=3, U_min=4, cut_method='eqqt',
+                 tolerance=0, n_jobs=-1, search_method='IV'):
+        super(cut_cnt, min_PCT, min_n, max_bin_cnt, I_min, U_min, cut_method,
               tolerance, n_jobs)
+        self.search_method = search_method
+        self.raw_bins = {}
+
+    def _fit(self, X, y, **kwargs):
+        """训练."""
+        init_p = self.get_params()
+        del init_p['search_method']
+        cutters = Cutter(self.cut_cnt, self.min_PCT, self.min_n,
+                         self.cut_method, self.n_jobs)
+        cutters.fit(X, y, **kwargs)
+        for x_name in X.columns:
+            x_p = init_p.update(kwargs.get(x_name), {})
+            xcutter = cutters.spliter.get(x_name)
+            if xcutter is None:
+                return self
+            crs = xcutter['cross']
+            cut = xcutter['cut']
+            xbin = gen_comb_bins(
+                crs, cut, x_p['I_min'], x_p['U_min'], x_p['var_shape'],
+                x_p['max_bin_cnt'], x_p['tolerance'], x_p['n_jobs'])
+            self.raw_bins.update({x_name: xbin})
+        return self
+
+    def _fast_search_best(self, search_method='IV'):
+        """单一目标搜索."""
+        if search_method != 'IV':
+            search_method = ['inflection_num', search_method, 'IV', 'bin_cnt']
+        else:
+            search_method = ['inflection_num', 'IV', 'bin_cnt']
+        bins_set = calc_sort_bins(self.raw_bins)
+        if len(bins_set) == 0:
+            return self
+        bins = pd.DataFrame.from_dict(bins_set, orient='index')
+        filter_index = bins.assign(
+            inflection_num=bins.loc[:, 'shape'].map(
+                {'I': 0, 'D': 0, 'U': 1})).sort_values(
+                    by=search_method, ascending=[True, True, False]).index[0]
+        self.bins_set = bins.loc[filter_index, :].to_dict()
+        return self
 
     def fit(self, X, y, **kwargs):
-        """训练."""
-        for x_name in X.columns:
-            pass
+        self._fit(X, y, **kwargs)
+        self._fast_search_best(self.search_method)
+        return self
+
+    def transform(self, X):
+        pass
+        # TODO

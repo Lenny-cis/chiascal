@@ -172,35 +172,35 @@ def merge_arr_by_idx(arr, idxlist):
     return merge_arr_by_baggedidx(arr, bidxs)
 
 
-def gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
-                   tolerance):
-    """生成合并结果."""
-    # 根据选取的切点合并列联表
-    merged_arr = merge_arr_by_idx(arr, merge_idxs)
-    shape = arr_badrate_shape(merged_arr)
-    # badrate的形状符合先验形状的分箱方式保留下来
-    if pd.isna(shape) or (shape not in variable_shape):
-        return
-    elif shape in ['I', 'D']:
-        if merged_arr.shape[0] < I_min:
-            return
-    else:
-        if merged_arr.shape[0] < U_min:
-            return
-    detail = calwoe(merged_arr, arr_na)
-    woes = detail['WOE']
-    tol = cal_min_tol(woes[:-1])
-    if tol <= tolerance:
-        return
-    chi, p, dof, expFreq =\
-        sps.chi2_contingency(merged_arr, correction=False)
-    var_entropy = sps.entropy(detail['all_num'][:-1])
-    var_bin_ = {
-        'detail': detail, 'flogp': -np.log(max(p, 1e-5)), 'tolerance': tol,
-        'entropy': var_entropy, 'shape': shape, 'bin_cnt': len(merged_arr),
-        'IV': detail['IV'].sum()
-        }
-    return var_bin_
+# def gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
+#                    tolerance):
+#     """生成合并结果."""
+#     # 根据选取的切点合并列联表
+#     merged_arr = merge_arr_by_idx(arr, merge_idxs)
+#     shape = arr_badrate_shape(merged_arr)
+#     # badrate的形状符合先验形状的分箱方式保留下来
+#     if pd.isna(shape) or (shape not in variable_shape):
+#         return
+#     elif shape in ['I', 'D']:
+#         if merged_arr.shape[0] < I_min:
+#             return
+#     else:
+#         if merged_arr.shape[0] < U_min:
+#             return
+#     detail = calwoe(merged_arr, arr_na)
+#     woes = detail['WOE']
+#     tol = cal_min_tol(woes[:-1])
+#     if tol <= tolerance:
+#         return
+#     chi, p, dof, expFreq =\
+#         sps.chi2_contingency(merged_arr, correction=False)
+#     var_entropy = sps.entropy(detail['all_num'][:-1])
+#     var_bin_ = {
+#         'detail': detail, 'flogp': -np.log(max(p, 1e-5)), 'tolerance': tol,
+#         'entropy': var_entropy, 'shape': shape, 'bin_cnt': len(merged_arr),
+#         'IV': detail['IV'].sum()
+#         }
+#     return var_bin_
 
 
 def cal_min_tol(arr):
@@ -304,7 +304,7 @@ def merge_zeronum(arr):
     return arr, sorted(idxlist)
 
 
-def merge_lowpct_zero(arr, cut, threshold_PCT=0.03, threshold_n=None):
+def merge_lowpct_zero(arr, cut, min_PCT=0.03, min_n=None):
     """
     合并地占比和0的箱.
 
@@ -330,11 +330,11 @@ def merge_lowpct_zero(arr, cut, threshold_PCT=0.03, threshold_n=None):
     na_arr = np.expand_dim(arr.data[arr.mask], axis=0)
     t_arr, idxlist = merge_zeronum(t_arr)
     cut = cut_adjust(cut, idxlist)
-    if threshold_n is not None:
-        t_arr, idxlist = merge_fewnum(t_arr, threshold_n)
+    if min_n is not None:
+        t_arr, idxlist = merge_fewnum(t_arr, min_n)
         cut = cut_adjust(cut, idxlist)
         return np.concatenate((t_arr, na_arr), axis=0), cut
-    t_arr, idxlist = merge_lowpct(t_arr, threshold_PCT)
+    t_arr, idxlist = merge_lowpct(t_arr, min_PCT)
     cut = cut_adjust(cut, idxlist)
     return np.concatenate((t_arr, na_arr), axis=0), cut
 
@@ -521,3 +521,11 @@ def is_y_zero(cross):
     if (ss == 0).any():
         return True
     return False
+
+
+def apply_cut_bin(ser, cut):
+    """Cut to bin."""
+    sdtype = ser.dtype
+    if pd.api.types.is_categorical_dtype(sdtype):
+        return ser.map(cut).fillna(-1)
+    return pd.cut(ser, cut, labels=False).fillna(-1)
