@@ -125,22 +125,6 @@ def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
     return var_bin_
 
 
-def calc_sort_bins(bins_dic):
-    """计算排序的指标值."""
-    def _normalize(x):
-        x_min = x.min()
-        x_max = x.max()
-        return (x - x_min)/(x_max - x_min)
-
-    if len(bins_dic) == 0:
-        return {}
-    bins = pd.DataFrame.from_dict(bins_dic, orient='index')
-    norm_iv = _normalize(bins.loc[:, 'IV'])
-    norm_e = _normalize(bins.loc[:, 'entropy'])
-    bins.loc[:, 'ivae'] = np.hypot(norm_iv, norm_e)
-    return bins.to_dict(orient='index')
-
-
 class Combiner(BaseBinner):
     """全组合."""
 
@@ -152,48 +136,58 @@ class Combiner(BaseBinner):
         self.search_method = search_method
         self.raw_bins = {}
 
-    def _fit(self, X, y, **kwargs):
-        """训练."""
-        init_p = self.get_params()
+    def _gen_rawbins(self, X, y, **kwargs):
+        """生产所有组合."""
+        init_p = dict(self.get_params())
         del init_p['search_method']
         cutters = Cutter(self.cut_cnt, self.min_PCT, self.min_n,
                          self.cut_method, self.n_jobs)
         cutters.fit(X, y, **kwargs)
         for x_name in X.columns:
-            x_p = init_p.update(kwargs.get(x_name), {})
+            x_p = {key: val.get(x_name, init_p[key])
+                   for key, val in kwargs.items()}
             xcutter = cutters.spliter.get(x_name)
             if xcutter is None:
                 return self
             crs = xcutter['cross']
             cut = xcutter['cut']
             xbin = gen_comb_bins(
-                crs, cut, x_p['I_min'], x_p['U_min'], x_p['var_shape'],
-                x_p['max_bin_cnt'], x_p['tolerance'], x_p['n_jobs'])
+                crs, cut, **x_p)
             self.raw_bins.update({x_name: xbin})
         return self
 
-    def _fast_search_best(self, search_method='IV'):
+    def _fast_search_best(self, **kwargs):
         """单一目标搜索."""
-        if search_method != 'IV':
-            search_method = ['inflection_num', search_method, 'IV', 'bin_cnt']
-        else:
-            search_method = ['inflection_num', 'IV', 'bin_cnt']
-        bins_set = calc_sort_bins(self.raw_bins)
+        def _fast_search(bins, method):
+            sort_bins = sorted(
+                bins.items(), key=lambda x: [inflection_num[x['shape']],
+                                             -method, -x['bin_cnt']])
+            return sort_bins
+
+        inflection_num = {'I': 0, 'D': 0, 'U': 1}
+        bins_set = self.raw_bins
         if len(bins_set) == 0:
             return self
-        bins = pd.DataFrame.from_dict(bins_set, orient='index')
-        filter_index = bins.assign(
-            inflection_num=bins.loc[:, 'shape'].map(
-                {'I': 0, 'D': 0, 'U': 1})).sort_values(
-                    by=search_method, ascending=[True, True, False]).index[0]
-        self.bins_set = bins.loc[filter_index, :].to_dict()
+        best_bins = Parallel(n_jobs=self.n_jobs)(
+            delayed(_fast_search)(val, kwargs.get(key, self.search_method))
+            for key, val in bins_set.items())
+        self.bins_set = dict(zip(bins_set.keys(), best_bins))
         return self
 
     def fit(self, X, y, **kwargs):
-        self._fit(X, y, **kwargs)
-        self._fast_search_best(self.search_method)
+        """最优分箱训练."""
+        fit_params = {key: val for key, val in kwargs.items()
+                      if key != 'search_method'}
+        self._gen_rawbins(X, y, **fit_params)
+        search_params = {key: val for key, val in kwargs.items()
+                         if key == 'search_method'}
+        self._fast_search_best(**search_params)
         return self
 
     def transform(self, X):
+        """最优分箱转换."""
+        cuts = self.bins_set
+        cutters = Cutter()
+        cutters.set_cut()
         pass
         # TODO

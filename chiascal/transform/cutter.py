@@ -56,7 +56,9 @@ class BinCutter(TransformerMixin, BaseEstimator):
         init_p = self.get_params()
         del init_p['n_jobs']
         var_bins = Parallel(n_jobs=self.n_jobs)(delayed(gen_cross_cut)(
-            X.loc[:, x_name], y, **{**init_p, **kwargs.get('x_name', {})})
+            X.loc[:, x_name], y,
+            **{key: val.get(x_name, init_p[key])
+               for key, val in kwargs.items()})
             for x_name in X.columns)
         self.spliter = dict(zip(X.columns.tolit(), var_bins))
         return self
