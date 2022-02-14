@@ -7,14 +7,15 @@ Created on Thu Feb 10 13:54:06 2022
 import numpy as np
 import pandas as pd
 from scipy.stats import chi2_contingency, entropy
-from itertools import (chain, product, combinations)
-from joblib import Parallel, delayed, dump, load
+from itertools import (chain, combinations)
+from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, TransformerMixin
 
 from .cutter import Cutter
-from .utils import (
-    gen_cut, gen_cross, is_y_zero, cut_adjust, merge_arr_by_idx,
-    arr_badrate_shape, calc_woe, calc_min_tol, merge_lowpct_zero,
+from ..utils.transform_utils import (
+    cut_adjust, merge_arr_by_idx,
+    arr_badrate_shape, calc_woe, calc_min_tol,
+    woe_list2dict, apply_woe,
     make_tqdm_iterator)
 
 
@@ -186,8 +187,13 @@ class Combiner(BaseBinner):
 
     def transform(self, X):
         """最优分箱转换."""
-        cuts = self.bins_set
+        cuts = {key: val['cut'] for key, val in self.bins_set.items()}
+        woes = {key: woe_list2dict(val['detail']['WOE'])
+                for key, val in self.bins_set.items()}
         cutters = Cutter()
-        cutters.set_cut()
-        pass
-        # TODO
+        cutters.set_cut(cuts)
+        xcutted = cutters.transform(X)
+        woe_dfs = Parallel(n_jobs=self.n_jobs())(
+            delayed(apply_woe)(xcutted.loc[:, x_name], woes[x_name])
+            for x_name in woes.keys())
+        return pd.concat(woe_dfs, axis=1)

@@ -10,7 +10,7 @@ from joblib import Parallel, delayed, dump, load
 from sklearn.base import BaseEstimator, TransformerMixin
 
 from .basebinner import BaseBinner
-from .utils import (
+from ..utils.transform_utils import (
     gen_cut, gen_cross, is_y_zero, merge_lowpct_zero, apply_cut_bin)
 
 
@@ -53,7 +53,7 @@ class BinCutter(TransformerMixin, BaseEstimator):
 
     def fit(self, X, y, **kwargs):
         """分割X和y."""
-        init_p = self.get_params()
+        init_p = dict(self.get_params())
         del init_p['n_jobs']
         var_bins = Parallel(n_jobs=self.n_jobs)(delayed(gen_cross_cut)(
             X.loc[:, x_name], y,

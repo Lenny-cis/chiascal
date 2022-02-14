@@ -56,63 +56,7 @@ def gen_cut_discrete(ser):
     return {i: val for i, val in enumerate(ser.categories)}
 
 
-def gen_cut(ser, var_type, **kwargs):
-    """生成切分点."""
-    if issubclass(var_type, (vtype.Summ, np.number)):
-        summ_kw = {key: val for key, val in kwargs.items()
-                   if key in ['n', 'mthd', 'precision']}
-        return gen_cut_summ(ser, **summ_kw)
-    if issubclass(var_type, vtype.Count):
-        return gen_cut_count(ser)
-    if issubclass(var_type, vtype.Discrete):
-        return gen_cut_discrete(ser)
-
-
-def gen_cross(ser, y, cut, var_type):
-    """生成变量的列联表."""
-    x = ser.name
-    df = pd.DataFrame({x: ser, 'y': y})
-    # 切分后返回bin[0, 1, ...]
-    if not issubclass(var_type, vtype.Discrete):
-        df.loc[:, x] = pd.cut(ser, cut, labels=False, duplicates='drop')
-    cross = df.groupby([x, 'y']).size().unstack()
-    cross.columns = cross.columns.astype('int')
-    allsize = df.groupby([y]).size()
-    na_cross = pd.DataFrame({
-        0: np.nansum([allsize.loc[0], -cross.sum().loc[0]]),
-        1: np.nansum([allsize.loc[1], -cross.sum().loc[1]])},
-        index=[-1])
-    if issubclass(var_type, vtype.Discrete):
-        if not var_type.ordered:
-            cross['eventRate'] = cross[1]/np.nansum(cross, axis=1)
-            cross.sort_values('eventRate', ascending=False, inplace=True)
-            cross.drop(['eventRate'], inplace=True, axis=1)
-        cross = cross.loc[cross.sum(axis=1) > 0, :]
-        t_cut = {v: k for k, v in enumerate(list(cross.index))}
-    else:
-        t_cut = [cut[int(x+1)] for x in cross.index]
-        t_cut.insert(0, -np.inf)
-    cross.reset_index(inplace=True, drop=True)
-    cross = cross.append(na_cross)
-    cross.fillna(0, inplace=True)
-    return cross, t_cut
-
-
-def apply_woe(ser, cut, woe, var_type):
-    """woe应用."""
-    if issubclass(var_type, vtype.Discrete):
-        return ser.map(cut).map(woe).fillna(woe.get(-1, 0))
-    return pd.cut(ser, cut, labels=False).map(woe).fillna(woe.get(-1, 0))
-
-
-def apply_cut_bin(ser, cut, var_type):
-    """Cut to bin."""
-    if issubclass(var_type, vtype.Discrete):
-        return ser.map(cut).fillna(-1)
-    return pd.cut(ser, cut, labels=False).fillna(-1)
-
-
-def caliv(cross):
+def calc_iv(cross):
     """计算IV值，输入矩阵."""
     warnings.filterwarnings('ignore')
     mat = cross.values
@@ -142,12 +86,12 @@ def gen_ksseries(y, pred, pos_label=None):
     return np.max(tpr - fpr), tpr - fpr, ksTile
 
 
-def calks(y, pred, pos_label=None):
+def calc_ks(y, pred, pos_label=None):
     """计算ks值."""
     return gen_ksseries(y, pred, pos_label)[0]
 
 
-def calauc(y, pred, pos_label=None):
+def calc_auc(y, pred, pos_label=None):
     """计算auc值."""
     fpr, tpr, thrd = roc_curve(y, pred, pos_label)
     return auc(fpr, tpr)

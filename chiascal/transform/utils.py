@@ -6,18 +6,13 @@ Created on Sun Jan 24 15:23:33 2021
 """
 
 
-import os
 import warnings
 import numpy as np
 import pandas as pd
-import scipy.stats as sps
 from copy import deepcopy
-from itertools import (chain, product, combinations)
 from collections import defaultdict
 from functools import reduce
-from joblib import Parallel, delayed, dump, load
 import autolrscorecard.variable_types.variable as vtype
-from .progress_bar import make_tqdm_iterator
 
 
 def is_shape_I(values):
@@ -529,3 +524,8 @@ def apply_cut_bin(ser, cut):
     if pd.api.types.is_categorical_dtype(sdtype):
         return ser.map(cut).fillna(-1)
     return pd.cut(ser, cut, labels=False).fillna(-1)
+
+
+def apply_woe(ser, woe):
+    """woe应用."""
+    return ser.map(woe).fillna(woe.get(-1, 0))
