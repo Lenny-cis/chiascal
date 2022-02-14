@@ -12,6 +12,7 @@ from joblib import Parallel, delayed
 from ..utils.performance_utils import calc_iv
 from ..utils.transform_utils import gen_cut, gen_cross
 
+
 def missing_ratio(ser):
     """计算缺失率."""
     return ser.isna().sum() / len(ser)
@@ -38,6 +39,7 @@ def iv(ser, y):
 
 
 def var_stats(ser, y):
+    """变量统计信息."""
     missing_ratio_ = missing_ratio(ser)
     concentration_ratio_ = concentration_ratio(ser)
     num_unique_ = num_unique(ser)
@@ -48,9 +50,11 @@ def var_stats(ser, y):
             'IV': iv_}
 
 
-class PreSelecter(TransformerMixin, BaseEstimator):
-    def __init__(self, nomissing=0.05, nonconcentration = 0.05, nunique = 0,
-                 IV = 0.01, n_jobs=-1):
+class StatsSelector(TransformerMixin, BaseEstimator):
+    """分箱前变量筛选."""
+
+    def __init__(self, nomissing=0.05, nonconcentration=0.05, nunique=0,
+                 IV=0.01, n_jobs=-1):
         self.nomissing = nomissing
         self.nonconcentration = nonconcentration
         self.nunique = nunique
@@ -58,6 +62,7 @@ class PreSelecter(TransformerMixin, BaseEstimator):
         self.n_jobs = n_jobs
 
     def fit(self, X, y, **kwargs):
+        """筛选."""
         init_p = dict(self.get_params())
         del init_p['n_jobs']
         stats = Parallel(n_jobs=self.n_jobs)(
@@ -67,3 +72,8 @@ class PreSelecter(TransformerMixin, BaseEstimator):
             key: val for key, val in self.var_stats.items()
             if all([val[wkey] >= wval.get(key, init_p[wkey])
                     for wkey, wval in kwargs.items()])}
+
+    def transform(self, X):
+        """应用."""
+        tran_x = self.pre_var_stats.keys()
+        return X.loc[:, tran_x]
