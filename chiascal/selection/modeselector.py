@@ -41,14 +41,14 @@ class TreeSelector(BaseEstimator, TransformerMixin):
             ascending=False)
         cm_ = ft_imp_df.cumsum()/ft_imp_df.sum()
         res_ = cm_.loc[cm_ < self.tree_threshold]
-        self.tree_vars = res_.index.to_list()
+        self.tree_vars = res_
 
     def transform(self, X):
         """应用筛选结果."""
-        return X.loc[:, self.tree_vars]
+        return X.loc[:, self.tree_vars.index]
 
 
-class LassoLRCV:
+class LassoLRCV(BaseEstimator, TransformerMixin):
     """lasso交叉验证逻辑回归."""
 
     def __init__(self):
@@ -78,175 +78,70 @@ class LassoLRCV:
         return X.loc[:, self.lasso_vars]
 
 
-class StepwiseSelector:
+class StepwiseSelector(BaseEstimator, TransformerMixin):
+    """逐步回归."""
 
-    def __init__(self, criterion = 'aic', p_enter = 0.01, p_remove = 0.01,
-                 p_value_enter = 0.2, intercept = False, max_iter = None,
-                 return_drop = False, exclude = None):
-        self.criterion = criterion
-        self.p_enter = p_enter
-        self.p_remove = p_remove
-        self.p_value_enter = p_value_enter
-        self.intercept = intercept
-        self.max_iter = max_iter
+    def __init__(self, threshold_in=0.05, threshold_out=0.1):
+        self.threshold_in = threshold_in
+        self.threshold_out = threshold_out
 
-    def stepwise_selection(X, y,
-                           initial_list=[],
-                           threshold_in=0.05,
-                           threshold_out = 0.1,
-                           verbose = True):
-        included = list(initial_list)
-
+    def fit(self, X, y):
+        """逐步回归."""
+        included = []
+        restricted_model = sm.Logit(y, pd.DataFrame({'const': [1] * len(y)}))\
+            .fit(disp=False)
+        best_f = 0
         while True:
-            changed=False
+            changed = False
+            model_exclude = None
+            model_include = None
             # forward step
             excluded = list(set(X.columns)-set(included))
-            new_pval = pd.Series(index=excluded)
             for new_column in excluded:
                 model = sm.Logit(
                     y, sm.add_constant(
                         pd.DataFrame(X[included+[new_column]])))\
                     .fit(disp=False)
-                if any(model.pvalues > 0.05):
+                if any(model.pvalues.iloc[1:] > 0.05):
                     continue
-                if model.df_resid > 1:
-                    fvalue, fpvalue, dfdiff = model.compare_f_test(
-                        restricted_model)
-                    if fpvalue < threshold_in:
-
-                ssr = model.ssr
-                F = (best_ssr - ssr)/ssr/model.
-                if model_aic < best_aic and model_pval < threshold_in:
-                    best_aic = model_aic
+                fvalue, fpvalue, _ = model.compare_f_test(restricted_model)
+                if fpvalue < self.threshold_in and fvalue > best_f:
+                    best_f = fvalue
                     model_include = new_column
                     changed = True
-                    print('Add  {:30} with p-value {:.6}'.format(best_feature, best_pval))
-            included.append(model_include)
 
+            if model_include is not None:
+                print('Add  {:30} with p-value {:.6}'
+                      .format(model_include, fpvalue))
+                included.append(model_include)
+
+            if len(included) == 1:
+                continue
             # backward step
+            full_model = sm.Logit(
+                y, sm.add_constant(pd.DataFrame(X[included]))).fit(disp=False)
+            best_f = np.inf
+            for ori_column in included:
+                t_col = [x for x in included if x != ori_column]
+                model = sm.Logit(y, sm.add_constant(pd.DataFrame(X[t_col])))\
+                    .fit(disp=False)
+                if any(model.pvlaues.iloc[1:] > 0.05):
+                    continue
+                fvalue, fpvalue, _ = full_model.compare_f_test(model)
+                if fpvalue > self.threshold_out and fvalue < best_f:
+                    best_f = fvalue
+                    model_exclude = ori_column
+                    changed = True
+            if model_exclude is not None:
+                print('Drop {:30} with p-value {:.6}'
+                      .format(model_exclude, fpvalue))
+                included.pop(model_exclude)
 
-            model = sm.Logit(y, sm.add_constant(pd.DataFrame(X[included])))\
-                .fit(disp=False)
-            # use all coefs except intercept
-            model_aic = model.aic
-            pvalues = model.pvalues.iloc[1:]
-            worst_pval = pvalues.max() # null if pvalues is empty
-            if worst_pval > threshold_out:
-                changed=True
-                worst_feature = pvalues.idxmax()
-                included.remove(worst_feature)
-                if verbose:
-                    print('Drop {:30} with p-value {:.6}'.format(worst_feature, worst_pval))
             if not changed:
                 break
-        return included
+        self.stepwise_vars = included
+        return self
 
-    def fit(self, X, y):
-
-def stepwise(frame, target = 'target', estimator = 'ols', direction = 'both', criterion = 'aic',
-            p_enter = 0.01, p_remove = 0.01, p_value_enter = 0.2, intercept = False,
-            max_iter = None, return_drop = False, exclude = None):
-    """stepwise to select features
-    Args:
-        frame (DataFrame): dataframe that will be use to select
-        target (str): target name in frame
-        estimator (str): model to use for stats
-        direction (str): direction of stepwise, support 'forward', 'backward' and 'both', suggest 'both'
-        criterion (str): criterion to statistic model, support 'aic', 'bic'
-        p_enter (float): threshold that will be used in 'forward' and 'both' to keep features
-        p_remove (float): threshold that will be used in 'backward' to remove features
-        intercept (bool): if have intercept
-        p_value_enter (float): threshold that will be used in 'both' to remove features
-        max_iter (int): maximum number of iterate
-        return_drop (bool): if need to return features' name who has been dropped
-        exclude (array-like): list of feature names that will not be dropped
-    Returns:
-        DataFrame: selected dataframe
-        array: list of feature names that has been dropped
-    """
-    df, y = split_target(frame, target)
-
-    if exclude is not None:
-        df = df.drop(columns = exclude)
-
-    drop_list = []
-    remaining = df.columns.tolist()
-
-    selected = []
-
-    sm = StatsModel(estimator = estimator, criterion = criterion, intercept = intercept)
-
-    order = -1 if criterion in ['aic', 'bic'] else 1
-
-    best_score = -np.inf * order
-
-    iter = -1
-    while remaining:
-        iter += 1
-        if max_iter and iter > max_iter:
-            break
-
-        l = len(remaining)
-        test_score = np.zeros(l)
-        test_res = np.empty(l, dtype = np.object)
-
-        if direction == 'backward':
-            for i in range(l):
-                test_res[i] = sm.stats(
-                    df[ remaining[:i] + remaining[i+1:] ],
-                    y,
-                )
-                test_score[i] = test_res[i]['criterion']
-
-            curr_ix = np.argmax(test_score * order)
-            curr_score = test_score[curr_ix]
-
-            if (curr_score - best_score) * order < p_remove:
-                break
-
-            name = remaining.pop(curr_ix)
-            drop_list.append(name)
-
-            best_score = curr_score
-
-        # forward and both
-        else:
-            for i in range(l):
-                test_res[i] = sm.stats(
-                    df[ selected + [remaining[i]] ],
-                    y,
-                )
-                test_score[i] = test_res[i]['criterion']
-
-            curr_ix = np.argmax(test_score * order)
-            curr_score = test_score[curr_ix]
-
-            name = remaining.pop(curr_ix)
-            if (curr_score - best_score) * order < p_enter:
-                drop_list.append(name)
-
-                # early stop
-                if selected:
-                    drop_list += remaining
-                    break
-
-                continue
-
-            selected.append(name)
-            best_score = curr_score
-
-            if direction == 'both':
-                p_values = test_res[curr_ix]['p_value']
-                drop_names = p_values[p_values > p_value_enter].index
-
-                for name in drop_names:
-                    selected.remove(name)
-                    drop_list.append(name)
-
-    r = frame.drop(columns = drop_list)
-
-    res = (r,)
-    if return_drop:
-        res += (drop_list,)
-
-    return unpack_tuple(res)
+    def transform(self, X):
+        """应用."""
+        return X.loc[:, self.stepwise_vars]
