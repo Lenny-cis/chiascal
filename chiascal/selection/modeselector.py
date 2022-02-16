@@ -81,16 +81,21 @@ class LassoLRCV(BaseEstimator, TransformerMixin):
 class StepwiseSelector(BaseEstimator, TransformerMixin):
     """逐步回归."""
 
-    def __init__(self, threshold_in=0.05, threshold_out=0.1):
-        self.threshold_in = threshold_in
-        self.threshold_out = threshold_out
+    def __init__(self, p_value_in=0.05, p_value_out=0.01, criterion='aic',
+                 value_in=0.1, value_out=0.5):
+        self.p_value_in = p_value_in
+        self.p_value_out = p_value_out
+        self.criterion = criterion
+        self.value_in = value_in
+        self.value_out = value_out
 
     def fit(self, X, y):
         """逐步回归."""
+        sign = -1 if self.criterion in ['aic', 'bic'] else 1
         included = []
-        restricted_model = sm.Logit(y, pd.DataFrame({'const': [1] * len(y)}))\
-            .fit(disp=False)
-        best_f = 0
+        restricted_model = sm.Logit(y, pd.DataFrame(
+            {'const': [1] * len(y)}, index=y.index)).fit(disp=False)
+        best_f = getattr(restricted_model, self.criterion)
         while True:
             changed = False
             model_exclude = None
@@ -99,49 +104,50 @@ class StepwiseSelector(BaseEstimator, TransformerMixin):
             excluded = list(set(X.columns)-set(included))
             for new_column in excluded:
                 model = sm.Logit(
-                    y, sm.add_constant(
-                        pd.DataFrame(X[included+[new_column]])))\
+                    y, sm.add_constant(X.loc[:, included+[new_column]]))\
                     .fit(disp=False)
-                if any(model.pvalues.iloc[1:] > 0.05):
+                if any(model.pvalues.iloc[1:] > self.p_value_in):
                     continue
-                fvalue, fpvalue, _ = model.compare_f_test(restricted_model)
-                if fpvalue < self.threshold_in and fvalue > best_f:
+                fvalue = getattr(model, self.criterion)
+                if (fvalue - best_f) * sign > self.value_in:
                     best_f = fvalue
                     model_include = new_column
                     changed = True
 
             if model_include is not None:
-                print('Add  {:30} with p-value {:.6}'
-                      .format(model_include, fpvalue))
+                print('Add  {:30} with {} {:.6}'
+                      .format(model_include, self.criterion, best_f))
                 included.append(model_include)
 
             if len(included) == 1:
                 continue
             # backward step
             full_model = sm.Logit(
-                y, sm.add_constant(pd.DataFrame(X[included]))).fit(disp=False)
-            best_f = np.inf
+                y, sm.add_constant(X.loc[:, included])).fit(disp=False)
+            best_f = getattr(full_model, self.criterion)
             for ori_column in included:
                 t_col = [x for x in included if x != ori_column]
-                model = sm.Logit(y, sm.add_constant(pd.DataFrame(X[t_col])))\
+                model = sm.Logit(y, sm.add_constant(X.loc[:, t_col]))\
                     .fit(disp=False)
-                if any(model.pvlaues.iloc[1:] > 0.05):
+                if any(model.pvalues.iloc[1:] > self.p_value_out):
                     continue
-                fvalue, fpvalue, _ = full_model.compare_f_test(model)
-                if fpvalue > self.threshold_out and fvalue < best_f:
+                fvalue = getattr(model, self.criterion)
+                if (best_f - fvalue) * sign < self.value_out:
                     best_f = fvalue
                     model_exclude = ori_column
                     changed = True
             if model_exclude is not None:
-                print('Drop {:30} with p-value {:.6}'
-                      .format(model_exclude, fpvalue))
+                print('Drop {:30} with {} {:.6}'
+                      .format(model_exclude, self.criterion, best_f))
                 included.pop(model_exclude)
 
             if not changed:
                 break
-        self.stepwise_vars = included
+        self.final_model = sm.Logit(
+            y, sm.add_constant(X.loc[:, included])).fit(disp=False)
         return self
 
-    def transform(self, X):
-        """应用."""
-        return X.loc[:, self.stepwise_vars]
+    def predict(self, X):
+        """预测结果."""
+        return self.final_model.predict(
+            sm.add_constant(X).loc[:, self.final_model.model.exog_names])

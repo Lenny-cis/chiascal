@@ -9,7 +9,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from joblib import Parallel, delayed
 
 
-from ..utils.performance_utils import calc_iv
+from ..utils.metrics import calc_iv
 from ..utils.transform_utils import gen_cut, gen_cross
 
 
