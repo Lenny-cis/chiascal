@@ -513,7 +513,7 @@ def gen_cross(ser, y, cut):
     if not pd.api.types.is_categorical_dtype(sdtype):
         df.loc[:, x] = pd.cut(ser, cut, labels=False, duplicates='drop')
     cross = df.groupby([x, 'y']).size().unstack()
-    cross.columns = cross.columns.astype('Int')
+    cross.columns = cross.columns.astype('Int64')
     allsize = df.groupby([y]).size()
     na_cross = pd.DataFrame({
         0: np.nansum([allsize.loc[0], -cross.sum().loc[0]]),

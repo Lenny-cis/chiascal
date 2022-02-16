@@ -34,8 +34,8 @@ def iv(ser, y):
     """变量IV."""
     cut = gen_cut(ser, n=20, mthd='eqqt', precision=4)
     cross, cut = gen_cross(ser, y, cut)
-    iv = calc_iv(cross)
-    return iv
+    iv_ = calc_iv(cross)
+    return iv_
 
 
 def var_stats(ser, y):
@@ -65,11 +65,14 @@ class StatsSelector(TransformerMixin, BaseEstimator):
         """筛选."""
         init_p = dict(self.get_params())
         del init_p['n_jobs']
+        stats = []
+        # for x_name in X.columns:
+        #     stats.append(var_stats(X.loc[:, x_name], y))
         stats = Parallel(n_jobs=self.n_jobs)(
             delayed(var_stats)(X.loc[:, x_name], y) for x_name in X.columns)
         self.raw_var_stats = dict(zip(X.columns.tolist(), stats))
         self.pre_var_stats = {
-            key: val for key, val in self.var_stats.items()
+            key: val for key, val in self.raw_var_stats.items()
             if all([val[wkey] >= wval.get(key, init_p[wkey])
                     for wkey, wval in kwargs.items()])}
 

@@ -8,8 +8,7 @@ Created on Sun Jan 24 15:20:38 2021
 
 import numpy as np
 import pandas as pd
-from autolrscorecard.utils.validate import param_in_validate
-import autolrscorecard.variable_types.variable as vtype
+from .validate import param_in_validate
 
 
 def gen_cut_summ(ser, n=10, mthd='eqqt', precision=4):
