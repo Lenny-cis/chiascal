@@ -11,8 +11,8 @@ from itertools import (chain, combinations)
 from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, TransformerMixin
 
-from .cutter import Cutter
-from ..utils.transform_utils import (
+from .cutter import BinCutter
+from ..utils.cut_merge import (
     cut_adjust, merge_arr_by_idx,
     arr_badrate_shape, calc_woe, calc_min_tol,
     woe_list2dict, apply_woe,
@@ -24,7 +24,7 @@ class BaseBinner(TransformerMixin, BaseEstimator):
 
     def __init__(self, cut_cnt=50, min_PCT=0.025, min_n=None,
                  max_bin_cnt=6, I_min=3, U_min=4, cut_method='eqqt',
-                 tolerance=0, n_jobs=-1):
+                 tolerance=0, precision=4, n_jobs=-1):
         self.cut_cnt = cut_cnt
         self.min_PCT = min_PCT
         self.min_n = min_n
@@ -33,12 +33,14 @@ class BaseBinner(TransformerMixin, BaseEstimator):
         self.U_min = U_min
         self.cut_method = cut_method
         self.tolerance = tolerance
+        self.precision = precision
         self.n_jobs = n_jobs
         self.bins_set = {}
 
 
-def gen_comb_bins(crs, cut, I_min, U_min, var_shape, max_bin_cnt,
+def gen_comb_bins(crs, cut, I_min, U_min, variable_shape, max_bin_cnt,
                   tolerance, n_jobs):
+    """生成全排列组合."""
     def comb_comb(hulkheads, loops):
         for loop in loops:
             yield combinations(hulkheads, loop)
@@ -46,7 +48,7 @@ def gen_comb_bins(crs, cut, I_min, U_min, var_shape, max_bin_cnt,
     cross = crs.copy()
     minnum_bin_I = I_min
     minnum_bin_U = U_min
-    vs = var_shape
+    vs = variable_shape
     maxnum_bin = max_bin_cnt
     tol = tolerance
     if 'U' not in vs:
@@ -70,7 +72,7 @@ def gen_comb_bins(crs, cut, I_min, U_min, var_shape, max_bin_cnt,
 
 
 def parallel_gen_bulkhead_bin(bcs, arr, I_min, U_min,
-                         variable_shape, tolerance, cut, n_jobs):
+                              variable_shape, tolerance, cut, n_jobs):
     """使用多核计算."""
     bcs = list(chain.from_iterable(bcs))
     tqdm_options = {'iterable': bcs, 'disable': False}
@@ -82,7 +84,7 @@ def parallel_gen_bulkhead_bin(bcs, arr, I_min, U_min,
 
 
 def gen_bulkhead_bin(arr, merge_idxs, I_min, U_min, variable_shape,
-                tolerance, cut):
+                     tolerance, cut):
     """计算变量分箱结果."""
     var_bin = gen_merged_bin(arr, merge_idxs, I_min, U_min,
                              variable_shape, tolerance)
@@ -97,7 +99,7 @@ def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
     """生成合并结果."""
     # 根据选取的切点合并列联表
     t_arr = np.ma.compress_rows(arr)
-    na_arr = np.expand_dim(arr.data[arr.mask], axis=0)
+    na_arr = np.expand_dims(arr.data[arr.mask], axis=0)
     merged_arr = merge_arr_by_idx(t_arr, merge_idxs)
     shape = arr_badrate_shape(merged_arr)
     # badrate的形状符合先验形状的分箱方式保留下来
@@ -131,9 +133,11 @@ class Combiner(BaseBinner):
 
     def __init__(self, cut_cnt=50, min_PCT=0.025, min_n=None,
                  max_bin_cnt=6, I_min=3, U_min=4, cut_method='eqqt',
-                 tolerance=0, n_jobs=-1, search_method='IV'):
-        super(cut_cnt, min_PCT, min_n, max_bin_cnt, I_min, U_min, cut_method,
-              tolerance, n_jobs)
+                 tolerance=0, precision=4, n_jobs=-1, search_method='IV',
+                 variable_shape='IDU'):
+        super().__init__(cut_cnt, min_PCT, min_n, max_bin_cnt, I_min, U_min,
+                         cut_method, tolerance, precision, n_jobs)
+        self.variable_shape = variable_shape
         self.search_method = search_method
         self.raw_bins = {}
 
@@ -141,12 +145,14 @@ class Combiner(BaseBinner):
         """生产所有组合."""
         init_p = dict(self.get_params())
         del init_p['search_method']
-        cutters = Cutter(self.cut_cnt, self.min_PCT, self.min_n,
-                         self.cut_method, self.n_jobs)
+        cutters = BinCutter(self.cut_cnt, self.min_PCT, self.min_n,
+                            self.cut_method, self.precision, self.n_jobs)
         cutters.fit(X, y, **kwargs)
         for x_name in X.columns:
-            x_p = {key: val.get(x_name, init_p[key])
-                   for key, val in kwargs.items()}
+            x_p = {key: kwargs.get(key, {}).get(x_name, val)
+                   for key, val in init_p.items()
+                   if key not in ['cut_cnt', 'precision', 'cut_method',
+                                  'min_PCT', 'min_n']}
             xcutter = cutters.spliter.get(x_name)
             if xcutter is None:
                 return self
@@ -190,7 +196,7 @@ class Combiner(BaseBinner):
         cuts = {key: val['cut'] for key, val in self.bins_set.items()}
         woes = {key: woe_list2dict(val['detail']['WOE'])
                 for key, val in self.bins_set.items()}
-        cutters = Cutter()
+        cutters = BinCutter()
         cutters.set_cut(cuts)
         xcutted = cutters.transform(X)
         woe_dfs = Parallel(n_jobs=self.n_jobs())(

@@ -10,7 +10,6 @@ import pandas as pd
 import numpy as np
 from copy import deepcopy
 from itertools import (product, combinations)
-import autolrscorecard.variable_types.variable as vtype
 from autolrscorecard.utils.validate import (
     param_in_validate, param_contain_validate)
 from autolrscorecard.utils import (
