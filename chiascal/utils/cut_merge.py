@@ -8,13 +8,9 @@ Created on Sun Jan 24 15:23:33 2021
 import warnings
 import numpy as np
 import pandas as pd
-import scipy.stats as sps
 from copy import deepcopy
 from collections import defaultdict
 from functools import reduce
-from itertools import chain
-from joblib import Parallel, delayed
-from .progress_bar import make_tqdm_iterator
 
 
 def is_shape_I(values):
@@ -90,8 +86,8 @@ def slc_min_dist(arr):
     R = R_margin/n
     C = C_margin/n
     # 惯量类比距离
-    dist = np.divide(np.square(A[1:]-A[:-1]), C).sum(axis=1, keepdims=True)\
-        / (1/R[1:]+1/R[:-1])
+    dist = np.nansum(np.divide(np.square(A[1:]-A[:-1]), C), axis=1,
+                     keepdims=True) / (1/R[1:]+1/R[:-1])
     return dist.argmin() + 1
 
 
@@ -235,7 +231,7 @@ def merge_lowpct(arr, thrd_PCT):
     arr: np.array
     idxlist: list
     """
-    arr = arr.copy()
+    arr, na_arr = split_na(arr)
     total = arr.sum()
     arr_idxs = list(range(arr.shape[0]))
     idxlist = []
@@ -250,7 +246,7 @@ def merge_lowpct(arr, thrd_PCT):
             bulkhead = arr_idxs.pop(merge_idx)
             idxlist.append(bulkhead)
         else:
-            return arr, sorted(idxlist)
+            return concat_na(arr, na_arr), sorted(idxlist)
 
 
 def merge_fewnum(arr, thrd_n):
@@ -269,7 +265,9 @@ def merge_fewnum(arr, thrd_n):
     arr: np.array
     idxlist: list
     """
+    arr, na_arr = split_na(arr)
     thrd_pct = thrd_n / arr.sum()
+    arr = concat_na(arr, na_arr)
     return merge_lowpct(arr, thrd_pct)
 
 
@@ -287,18 +285,16 @@ def merge_zeronum(arr):
     arr: np.array
     idxlist: list
     """
-    arr = arr.copy()
+    arr, na_arr = split_na(arr)
     arr_idxs = list(range(arr.shape[0]))
     zero_ = np.array(arr_idxs)[(arr == 0).any(axis=1)]
     idxlist = []
-    while zero_.shape[0] > 0:
+    for min_idx in zero_[::-1]:
         # 占比低于阈值则合并
-        min_idx = zero_[0]
-        zero_ = zero_[1:]
         arr, merge_idx = best_merge_by_idx(arr, min_idx)
         bulkhead = arr_idxs.pop(merge_idx)
         idxlist.append(bulkhead)
-    return arr, sorted(idxlist)
+    return concat_na(arr, na_arr), sorted(idxlist)
 
 
 def merge_lowpct_zero(arr, cut, min_PCT=0.03, min_n=None):
@@ -323,17 +319,15 @@ def merge_lowpct_zero(arr, cut, min_PCT=0.03, min_n=None):
     cut: list
         合并调整后的cut
     """
-    t_arr = np.ma.compress_rows(arr)
-    na_arr = np.expand_dims(arr.data[arr.mask], axis=0)
-    t_arr, idxlist = merge_zeronum(t_arr)
+    arr, idxlist = merge_zeronum(arr)
     cut = cut_adjust(cut, idxlist)
     if min_n is not None:
-        t_arr, idxlist = merge_fewnum(t_arr, min_n)
+        arr, idxlist = merge_fewnum(arr, min_n)
         cut = cut_adjust(cut, idxlist)
-        return np.concatenate((t_arr, na_arr), axis=0), cut
-    t_arr, idxlist = merge_lowpct(t_arr, min_PCT)
+        return arr, cut
+    arr, idxlist = merge_lowpct(arr, min_PCT)
     cut = cut_adjust(cut, idxlist)
-    return np.concatenate((t_arr, na_arr), axis=0), cut
+    return arr, cut
 
 
 def calc_woe(arr, precision=4, modify=True):
@@ -508,7 +502,7 @@ def gen_cross(ser, y, cut):
         t_cut = [cut[int(x+1)] for x in cross.index]
         t_cut.insert(0, -np.inf)
     cross.reset_index(inplace=True, drop=True)
-    cross = cross.append(na_cross)
+    cross = pd.concat([cross, na_cross], axis=0)
     cross.fillna(0, inplace=True)
     return cross, t_cut
 
@@ -537,3 +531,18 @@ def calc_min_tol(arr):
     """计算woe的最小差值."""
     arr_ = arr.copy()
     return np.min(np.abs(arr_[1:] - arr_[:-1]))
+
+
+def split_na(arr):
+    """分割掩码修饰的缺失项数组."""
+    t_arr = np.ma.compress_rows(arr)
+    na_arr = np.expand_dims(arr.data[arr.mask], axis=0)
+    return t_arr, na_arr
+
+
+def concat_na(arr, na_arr):
+    """组合缺失项数组并掩码修饰."""
+    mask = np.zeros((arr.shape[0]+1, arr.shape[1]))
+    mask[-1, :] = 1
+    crs = np.ma.array(np.concatenate((arr, na_arr), axis=0), mask=mask)
+    return crs

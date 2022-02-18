@@ -6,6 +6,7 @@ Created on Thu Feb 17 14:47:48 2022
 """
 
 import pandas as pd
+from sklearn.pipeline import Pipeline
 
 from chiascal.utils.comms import make_x_y
 from chiascal.transform.combiner import Combiner
@@ -18,3 +19,12 @@ statsselector = StatsSelector(n_jobs=1, noconcentration=0.5)
 sample_X = statsselector.fit_transform(sample_X, sample_y)
 comb = Combiner()
 comb.fit(sample_X, sample_y)
+cbs = comb.bins_set
+tx = comb.transform(sample_X)
+
+test_sample = pd.read_hdf(r'.\test\data\test_sample.h5', 'data')
+sample_X, sample_y = make_x_y(test_sample, 'flag')
+ppl = Pipeline([('statssl', StatsSelector(n_jobs=1, noconcentration=0.5)),
+               ('combinerbins', Combiner())])
+ppl.fit(sample_X, sample_y)
+tx = comb.transform(sample_X)

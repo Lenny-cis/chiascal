@@ -15,8 +15,8 @@ from .cutter import BinCutter
 from ..utils.cut_merge import (
     cut_adjust, merge_arr_by_idx,
     arr_badrate_shape, calc_woe, calc_min_tol,
-    woe_list2dict, apply_woe,
-    make_tqdm_iterator)
+    woe_list2dict, apply_woe, split_na, concat_na)
+from ..utils.progress_bar import make_tqdm_iterator
 
 
 class BaseBinner(TransformerMixin, BaseEstimator):
@@ -45,7 +45,7 @@ def gen_comb_bins(crs, cut, I_min, U_min, variable_shape, max_bin_cnt,
         for loop in loops:
             yield combinations(hulkheads, loop)
 
-    cross = crs.copy()
+    cross, na_arr = split_na(crs)
     minnum_bin_I = I_min
     minnum_bin_U = U_min
     vs = variable_shape
@@ -98,8 +98,7 @@ def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
                    tolerance):
     """生成合并结果."""
     # 根据选取的切点合并列联表
-    t_arr = np.ma.compress_rows(arr)
-    na_arr = np.expand_dims(arr.data[arr.mask], axis=0)
+    t_arr, na_arr = split_na(arr)
     merged_arr = merge_arr_by_idx(t_arr, merge_idxs)
     shape = arr_badrate_shape(merged_arr)
     # badrate的形状符合先验形状的分箱方式保留下来
@@ -111,7 +110,7 @@ def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
     else:
         if merged_arr.shape[0] < U_min:
             return
-    masked_arr = np.concatenate((merged_arr, na_arr), axis=0)
+    masked_arr = concat_na(merged_arr, na_arr)
     detail = calc_woe(masked_arr)
     woes = detail['WOE']
     tol = calc_min_tol(woes[:-1])
@@ -153,7 +152,7 @@ class Combiner(BaseBinner):
                    for key, val in init_p.items()
                    if key not in ['cut_cnt', 'precision', 'cut_method',
                                   'min_PCT', 'min_n']}
-            xcutter = cutters.spliter.get(x_name)
+            xcutter = cutters.split_set.get(x_name)
             if xcutter is None:
                 return self
             crs = xcutter['cross']
@@ -167,9 +166,9 @@ class Combiner(BaseBinner):
         """单一目标搜索."""
         def _fast_search(bins, method):
             sort_bins = sorted(
-                bins.items(), key=lambda x: [inflection_num[x['shape']],
-                                             -method, -x['bin_cnt']])
-            return sort_bins
+                bins.items(), key=lambda x: [inflection_num[x[1]['shape']],
+                                             -x[1][method], -x[1]['bin_cnt']])
+            return sort_bins[0][1]
 
         inflection_num = {'I': 0, 'D': 0, 'U': 1}
         bins_set = self.raw_bins
@@ -199,7 +198,7 @@ class Combiner(BaseBinner):
         cutters = BinCutter()
         cutters.set_cut(cuts)
         xcutted = cutters.transform(X)
-        woe_dfs = Parallel(n_jobs=self.n_jobs())(
+        woe_dfs = Parallel(n_jobs=self.n_jobs)(
             delayed(apply_woe)(xcutted.loc[:, x_name], woes[x_name])
             for x_name in woes.keys())
         return pd.concat(woe_dfs, axis=1)

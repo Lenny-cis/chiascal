@@ -25,12 +25,7 @@ def gen_cross_cut(x, y, cut_cnt, cut_method, precision, min_PCT, min_n):
     mask = np.zeros_like(cross)
     mask[-1, :] = 1
     crs = np.ma.array(cross.to_numpy(), mask=mask)
-    t_arr = np.ma.compress_rows(crs)
-    na_arr = np.expand_dims(crs.data[crs.mask], axis=0)
-    t_arr, cut = merge_lowpct_zero(t_arr, cut, min_PCT, min_n)
-    mask = np.zeros((t_arr.shape[0] + 1, t_arr.shape[1]))
-    mask[-1, :] = 1
-    crs = np.ma.array(np.concatenate((t_arr, na_arr), axis=0), mask=mask)
+    crs, cut = merge_lowpct_zero(crs, cut, min_PCT, min_n)
     return {'cross': crs, 'cut': cut}
 
 
@@ -38,37 +33,36 @@ class BinCutter(TransformerMixin, BaseEstimator):
     """分割器."""
 
     def __init__(self, cut_cnt=50, min_PCT=0.025, min_n=None,
-                 cut_method='eqqt', precision=4, n_jobs=-1):
+                 cut_method='eqqt', precision=4, n_jobs=1):
         self.cut_cnt = cut_cnt
         self.min_PCT = min_PCT
         self.min_n = min_n
         self.cut_method = cut_method
         self.n_jobs = n_jobs
         self.precision = precision
-        self.spliter = {}
+        self.split_set = {}
 
     def set_cut(self, cut_dict):
         """指定切分点."""
         orient_cut = self.get_cut()
         orient_cut.update(cut_dict)
-        self.spliter = {key: {**self.spliter.get(key, {}), 'cut': val}
-                        for key, val in orient_cut.items()}
+        self.split_set = {key: {**self.split_set.get(key, {}), 'cut': val}
+                          for key, val in orient_cut.items()}
 
     def get_cut(self):
         """分割器的切分点."""
-        return {key: val['cut'] for key, val in self.split.items()}
+        return {key: val['cut'] for key, val in self.split_set.items()}
 
     def fit(self, X, y, **kwargs):
         """分割X和y."""
         init_p = dict(self.get_params())
         del init_p['n_jobs']
-        var_bins = []
         var_bins = Parallel(n_jobs=self.n_jobs)(delayed(gen_cross_cut)(
             X.loc[:, x_name], y,
             **{key: kwargs.get(x_name, {}).get(key, val)
                 for key, val in init_p.items()})
             for x_name in X.columns)
-        self.spliter = dict(zip(X.columns.tolist(), var_bins))
+        self.split_set = dict(zip(X.columns.tolist(), var_bins))
         return self
 
     def transform(self, X):

@@ -58,7 +58,7 @@ class StatsSelector(TransformerMixin, BaseEstimator):
     """分箱前变量筛选."""
 
     def __init__(self, nomissing=0.05, noconcentration=0.05, nunique=0,
-                 IV=0.01, n_jobs=-1):
+                 IV=0.01, n_jobs=1):
         self.nomissing = nomissing
         self.noconcentration = noconcentration
         self.nunique = nunique
