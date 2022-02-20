@@ -14,17 +14,11 @@ from chiascal.selection import StatsSelector
 
 
 test_sample = pd.read_hdf(r'.\test\data\test_sample.h5', 'data')
-sample_X, sample_y = make_x_y(test_sample, 'flag')
-statsselector = StatsSelector(n_jobs=1, noconcentration=0.5)
-sample_X = statsselector.fit_transform(sample_X, sample_y)
-comb = Combiner()
-comb.fit(sample_X, sample_y)
-cbs = comb.bins_set
-tx = comb.transform(sample_X)
-
-test_sample = pd.read_hdf(r'.\test\data\test_sample.h5', 'data')
-sample_X, sample_y = make_x_y(test_sample, 'flag')
+sample_X, sample_y = make_x_y(
+    test_sample, 'flag', **{'age_class': pd.CategoricalDtype(
+        categories=['A', 'B', 'C', 'D', 'E', 'F', 'G'], ordered=True)})
 ppl = Pipeline([('statssl', StatsSelector(n_jobs=1, noconcentration=0.5)),
                ('combinerbins', Combiner())])
 ppl.fit(sample_X, sample_y)
-tx = comb.transform(sample_X)
+tx = ppl.transform(sample_X)
+ppl.steps[1][1].bins_set

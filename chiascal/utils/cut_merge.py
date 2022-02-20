@@ -473,7 +473,7 @@ def gen_cut_count(ser):
 
 def gen_cut_discrete(ser):
     """生成分类变量切分点."""
-    return {i: val for i, val in enumerate(ser.categories)}
+    return {i: val for i, val in enumerate(ser.dtype.categories)}
 
 
 def gen_cross(ser, y, cut):

@@ -11,6 +11,8 @@ import pandas as pd
 def make_x_y(df, y_name, **kwargs):
     """生成自变量和应变量."""
     tdf = df.convert_dtypes()
+    for key, dtp in kwargs.items():
+        tdf.loc[:, key] = tdf.loc[:, key].astype(kwargs[key])
     ori_dtypes = tdf.dtypes
     for key, dtp in ori_dtypes.items():
         if pd.api.types.is_integer_dtype(dtp):
