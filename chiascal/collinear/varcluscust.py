@@ -8,8 +8,17 @@ Created on Sun Jan 24 19:05:01 2021
 
 import os
 import pandas as pd
-from openpyxl import load_workbook
-from varclushi import VarClusHi
+from sklearn.base import BaseEstimator, TransformerMixin
+import logging
+
+
+from .varclushi import VarClusHi
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+logger = logging.getLogger(__name__)
 
 
 def var_cluster(df, maxeigval2=1, maxclus=None, n_rs=0, feat_list=None,
@@ -29,54 +38,47 @@ def var_cluster(df, maxeigval2=1, maxclus=None, n_rs=0, feat_list=None,
             vc_rs.to_dict(orient='index'))
 
 
-class VarClusCust:
+class VarClusCust(TransformerMixin, BaseEstimator):
     """处理多重共线性问题."""
 
-    def __init__(self, entity):
-        self.entity = entity
+    def __init__(self, maxeigval2=1, maxclus=None, n_rs=0, speedup=True):
+        self.maxeigval2 = maxeigval2
+        self.maxclus = maxclus
+        self.n_rs = n_rs
+        self.speedup = speedup
         self.cluster_info = {}
         self.cluster_vars = {}
         self.cluster_rsquare = {}
 
-    def fit(self, maxeigval2=1, maxclus=None, n_rs=0, speedup=False):
+    def fit(self, X, y=None):
         """训练."""
-        entity = self.entity
-        X = entity.pipe_X
+        logger.info('Start {} fit'.format(self.__class__.__name__))
         cls_vars, vc_info, vc_rs = var_cluster(
-            X, maxeigval2, maxclus, n_rs, None, speedup)
+            X, self.maxeigval2, self.maxclus, self.n_rs, None, self.speedup)
         self.cluster_info = vc_info
         self.cluster_vars = cls_vars
         self.cluster_rsquare = vc_rs
-        entity.steps.update({
-            'varclus': {'cluster_info': self.cluster_info,
-                        'cluster_vars': self.cluster_vars,
-                        'cluster_rsquare': self.cluster_rsquare}})
         return self
 
-    def transform(self, entity=None):
+    def transform(self, X):
         """应用."""
-        if entity is None:
-            entity = self.entity
-        drop_vars = entity.pipe_X.columns.difference(self.cluster_vars)
-        entity.pipe_X = entity.pipe_X.drop(drop_vars, axis=1)
-        entity.update_data()
-        return self
+        return X.loc[:, self.cluster_vars]
 
-    def output(self):
-        """输出报告."""
-        pass
+    # def output(self):
+    #     """输出报告."""
+    #     pass
 
-    def report(self, file):
-        df = pd.DataFrame.from_dict(self.cluster_rsquare, orient='index')
-        if not os.path.exists(file):
-            with pd.ExcelWriter(file) as writer:
-                df.to_excel(writer, sheet_name='varclus')
-        else:
-            with pd.ExcelWriter(file, engine='openpyxl') as writer:
-                book = load_workbook(file)
-                writer.book = book
-                df.to_excel(writer, sheet_name='varclus')
-        return self
+    # def report(self, file):
+    #     df = pd.DataFrame.from_dict(self.cluster_rsquare, orient='index')
+    #     if not os.path.exists(file):
+    #         with pd.ExcelWriter(file) as writer:
+    #             df.to_excel(writer, sheet_name='varclus')
+    #     else:
+    #         with pd.ExcelWriter(file, engine='openpyxl') as writer:
+    #             book = load_workbook(file)
+    #             writer.book = book
+    #             df.to_excel(writer, sheet_name='varclus')
+    #     return self
 # class VarClusCust:
 #     """处理多重共线性问题."""
 

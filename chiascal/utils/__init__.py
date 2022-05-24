@@ -7,4 +7,3 @@ Created on Fri May  7 14:25:39 2021
 
 from .comms import *
 from .progress_bar import *
-from .performance_utils import *

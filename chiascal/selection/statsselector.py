@@ -8,10 +8,18 @@ import pandas as pd
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from joblib import Parallel, delayed
+import logging
 
 
 from ..utils.metrics import calc_iv
 from ..utils.cut_merge import gen_cut, gen_cross
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+logger = logging.getLogger(__name__)
 
 
 def missing_ratio(ser):
@@ -67,11 +75,12 @@ class StatsSelector(TransformerMixin, BaseEstimator):
 
     def fit(self, X, y, **kwargs):
         """筛选."""
+        logger.info('Start {} fit'.format(self.__class__.__name__))
         init_p = dict(self.get_params())
         del init_p['n_jobs']
-        stats = []
+        # stats = []
         # for x_name in X.columns:
-        #     stats.append(var_stats(X.loc[:, x_name], y))
+        #     stats.append(var_stats(X.loc[:, x_name], y, init_p))
         stats = Parallel(n_jobs=self.n_jobs)(
             delayed(var_stats)(X.loc[:, x_name], y, init_p)
             for x_name in X.columns)
@@ -85,3 +94,6 @@ class StatsSelector(TransformerMixin, BaseEstimator):
         """应用."""
         tran_x = self.pre_var_stats.keys()
         return X.loc[:, tran_x]
+
+    def get_pre_IVs(self):
+        return {key: val['IV'] for key, val in self.pre_var_stats.items()}

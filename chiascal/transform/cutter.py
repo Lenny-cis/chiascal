@@ -8,9 +8,16 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, TransformerMixin
+import logging
 
 from ..utils.cut_merge import (
     gen_cut, gen_cross, is_y_zero, merge_lowpct_zero, apply_cut_bin)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+logger = logging.getLogger(__name__)
 
 
 def gen_cross_cut(x, y, cut_cnt, cut_method, precision, min_PCT, min_n):
@@ -29,6 +36,15 @@ def gen_cross_cut(x, y, cut_cnt, cut_method, precision, min_PCT, min_n):
     return {'cross': crs, 'cut': cut}
 
 
+def gen_cross_from_cut(x, y, cut):
+    """根据手动切分点生成spliter."""
+    cross, cut = gen_cross(x, y, cut)
+    mask = np.zeros_like(cross)
+    mask[-1, :] = 1
+    crs = np.ma.array(cross.to_numpy(), mask=mask)
+    return {'cross': crs, 'cut': cut}
+
+
 class BinCutter(TransformerMixin, BaseEstimator):
     """分割器."""
 
@@ -42,16 +58,30 @@ class BinCutter(TransformerMixin, BaseEstimator):
         self.precision = precision
         self.split_set = {}
 
-    def set_cut(self, cut_dict):
+    def set_cut(self, cut_dict, X=None, y=None):
         """指定切分点."""
-        orient_cut = self.get_cut()
+        orient_cut = self.allcut
         orient_cut.update(cut_dict)
-        self.split_set = {key: {**self.split_set.get(key, {}), 'cut': val}
-                          for key, val in orient_cut.items()}
+        if X is not None and y is not None:
+            new_crslis = Parallel(n_jobs=self.n_jobs)(delayed(
+                gen_cross_from_cut)(X.loc[:, x_name], y, cut)
+                for x_name, cut in cut_dict.items())
+            new_split = dict(zip(cut_dict.keys(), new_crslis))
+        else:
+            new_split = {key: {**self.split_set.get(key, {}), 'cut': val}
+                         for key, val in orient_cut.items()}
+        self.split_set.update(new_split)
+        return self
 
-    def get_cut(self):
+    @property
+    def allcut(self):
         """分割器的切分点."""
         return {key: val['cut'] for key, val in self.split_set.items()}
+
+    @property
+    def allcross(self):
+        """切分器的列联表."""
+        return {key: val['cross'] for key, val in self.split_set.items()}
 
     def fit(self, X, y, **kwargs):
         """分割X和y."""
@@ -67,7 +97,7 @@ class BinCutter(TransformerMixin, BaseEstimator):
 
     def transform(self, X):
         """应用分割."""
-        cuts = self.get_cut()
+        cuts = self.allcut
         cut_df = Parallel(n_jobs=self.n_jobs)(delayed(apply_cut_bin)(
             X.loc[:, x_name], cuts[x_name]) for x_name in cuts.keys())
         return pd.concat(cut_df, axis=1)

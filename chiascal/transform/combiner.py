@@ -10,6 +10,7 @@ from scipy.stats import chi2_contingency, entropy
 from itertools import (chain, combinations)
 from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, TransformerMixin
+import logging
 
 from .cutter import BinCutter
 from ..utils.cut_merge import (
@@ -17,6 +18,12 @@ from ..utils.cut_merge import (
     arr_badrate_shape, calc_woe, calc_min_tol,
     woe_list2dict, apply_woe, split_na, concat_na)
 from ..utils.progress_bar import make_tqdm_iterator
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+logger = logging.getLogger(__name__)
 
 
 class BaseBinner(TransformerMixin, BaseEstimator):
@@ -39,7 +46,7 @@ class BaseBinner(TransformerMixin, BaseEstimator):
 
 
 def gen_comb_bins(crs, cut, I_min, U_min, variable_shape, max_bin_cnt,
-                  tolerance, n_jobs):
+                  tolerance, n_jobs, var):
     """生成全排列组合."""
     def comb_comb(hulkheads, loops):
         for loop in loops:
@@ -66,16 +73,16 @@ def gen_comb_bins(crs, cut, I_min, U_min, variable_shape, max_bin_cnt,
     bcs = comb_comb(bulkhead_list, loops_)
     # 多核并行计算
     var_bins = parallel_gen_bulkhead_bin(
-        bcs, crs, minnum_bin_I, minnum_bin_U, vs, tol, cut, n_jobs)
+        bcs, crs, minnum_bin_I, minnum_bin_U, vs, tol, cut, n_jobs, var)
     var_bin_dic = {k: v for k, v in enumerate(var_bins) if v is not None}
     return var_bin_dic
 
 
 def parallel_gen_bulkhead_bin(bcs, arr, I_min, U_min,
-                              variable_shape, tolerance, cut, n_jobs):
+                              variable_shape, tolerance, cut, n_jobs, var):
     """使用多核计算."""
     bcs = list(chain.from_iterable(bcs))
-    tqdm_options = {'iterable': bcs, 'disable': False}
+    tqdm_options = {'iterable': bcs, 'disable': False, 'desc': var}
     progress_bar = make_tqdm_iterator(**tqdm_options)
     var_bins = Parallel(n_jobs=n_jobs)(delayed(gen_bulkhead_bin)(
         arr, merge_idxs, I_min, U_min, variable_shape, tolerance, cut)
@@ -92,6 +99,20 @@ def gen_bulkhead_bin(arr, merge_idxs, I_min, U_min, variable_shape,
     if var_bin is not None:
         var_bin.update({'cut': cut})
     return var_bin
+
+
+def calc_details(masked_arr):
+    """分箱细节."""
+    detail = calc_woe(masked_arr)
+    woes = detail['WOE']
+    tol = calc_min_tol(woes[:-1])
+    merged_arr, na_arr = split_na(masked_arr)
+    chi, p, dof, expFreq =\
+        chi2_contingency(merged_arr, correction=False)
+    var_entropy = entropy(detail['all_num'][:-1])
+    return {'detail': detail, 'flogp': -np.log(max(p, 1e-5)), 'tolerance': tol,
+            'entropy': var_entropy, 'bin_cnt': len(merged_arr),
+            'IV': detail['IV'].sum()}
 
 
 def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
@@ -111,19 +132,10 @@ def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
         if merged_arr.shape[0] < U_min:
             return
     masked_arr = concat_na(merged_arr, na_arr)
-    detail = calc_woe(masked_arr)
-    woes = detail['WOE']
-    tol = calc_min_tol(woes[:-1])
-    if tol <= tolerance:
+    var_bin_ = calc_details(masked_arr)
+    if var_bin_['tolerance'] <= tolerance:
         return
-    chi, p, dof, expFreq =\
-        chi2_contingency(merged_arr, correction=False)
-    var_entropy = entropy(detail['all_num'][:-1])
-    var_bin_ = {
-        'detail': detail, 'flogp': -np.log(max(p, 1e-5)), 'tolerance': tol,
-        'entropy': var_entropy, 'shape': shape, 'bin_cnt': len(merged_arr),
-        'IV': detail['IV'].sum()
-        }
+    var_bin_.update({'shape': shape})
     return var_bin_
 
 
@@ -152,6 +164,7 @@ class Combiner(BaseBinner):
                    for key, val in init_p.items()
                    if key not in ['cut_cnt', 'precision', 'cut_method',
                                   'min_PCT', 'min_n']}
+            x_p.update({'var': x_name})
             xcutter = cutters.split_set.get(x_name)
             if xcutter is None:
                 return self
@@ -159,7 +172,8 @@ class Combiner(BaseBinner):
             cut = xcutter['cut']
             xbin = gen_comb_bins(
                 crs, cut, **x_p)
-            self.raw_bins.update({x_name: xbin})
+            if len(xbin) > 0:
+                self.raw_bins.update({x_name: xbin})
         return self
 
     def _fast_search_best(self, **kwargs):
@@ -180,8 +194,11 @@ class Combiner(BaseBinner):
         self.bins_set = dict(zip(bins_set.keys(), best_bins))
         return self
 
-    def fit(self, X, y, **kwargs):
+    def fit(self, X, y, refit=True, **kwargs):
         """最优分箱训练."""
+        logger.info('Start {} fit'.format(self.__class__.__name__))
+        if not refit:
+            return self
         fit_params = {key: val for key, val in kwargs.items()
                       if key != 'search_method'}
         self._gen_rawbins(X, y, **fit_params)
@@ -202,3 +219,20 @@ class Combiner(BaseBinner):
             delayed(apply_woe)(xcutted.loc[:, x_name], woes[x_name])
             for x_name in woes.keys())
         return pd.concat(woe_dfs, axis=1)
+
+    def update(self, X, y, new_cuts):
+        """手动分箱."""
+        def _calc_details(masked_arr, cut):
+            merged_arr, na_arr = split_na(masked_arr)
+            shape = arr_badrate_shape(merged_arr)
+            var_bin_ = calc_details(masked_arr)
+            var_bin_.update({'shape': shape, 'cut': cut})
+            return var_bin_
+
+        cutters = BinCutter()
+        cutters.set_cut(new_cuts, X, y)
+        update_bins_lis = Parallel(n_jobs=self.n_jobs)(delayed(_calc_details)(
+            cutters.allcross[key], cut) for key, cut in new_cuts.items())
+        update_bins_set = dict(zip(new_cuts.keys(), update_bins_lis))
+        self.bins_set.update(update_bins_set)
+        return self
