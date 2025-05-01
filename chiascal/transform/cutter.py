@@ -12,6 +12,8 @@ import logging
 
 from ..utils.cut_merge import (
     gen_cut, gen_cross, is_y_zero, merge_lowpct_zero, apply_cut_bin)
+from ..utils import FuncRunInfo
+from ..utils.progress_bar import make_tqdm_iterator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,7 +51,7 @@ class BinCutter(TransformerMixin, BaseEstimator):
     """分割器."""
 
     def __init__(self, cut_cnt=50, min_PCT=0.025, min_n=None,
-                 cut_method='eqqt', precision=4, n_jobs=1):
+                 cut_method='eqqt', precision=6, n_jobs=1):
         self.cut_cnt = cut_cnt
         self.min_PCT = min_PCT
         self.min_n = min_n
@@ -64,7 +66,7 @@ class BinCutter(TransformerMixin, BaseEstimator):
         orient_cut.update(cut_dict)
         if X is not None and y is not None:
             new_crslis = Parallel(n_jobs=self.n_jobs)(delayed(
-                gen_cross_from_cut)(X.loc[:, x_name], y, cut)
+                gen_cross_from_cut)(X[x_name], y, cut)
                 for x_name, cut in cut_dict.items())
             new_split = dict(zip(cut_dict.keys(), new_crslis))
         else:
@@ -83,21 +85,26 @@ class BinCutter(TransformerMixin, BaseEstimator):
         """切分器的列联表."""
         return {key: val['cross'] for key, val in self.split_set.items()}
 
+    @FuncRuninfo
     def fit(self, X, y, **kwargs):
         """分割X和y."""
         init_p = dict(self.get_params())
         del init_p['n_jobs']
+        tqdm_options = {'iterable': X.columns.tolist(), 'desc': 'Cut',
+                        'disable': False}
+        progress_bar = make_tqdm_iterator(**tqdm_options)
         var_bins = Parallel(n_jobs=self.n_jobs)(delayed(gen_cross_cut)(
-            X.loc[:, x_name], y,
+            X[x_name], y,
             **{key: kwargs.get(x_name, {}).get(key, val)
                 for key, val in init_p.items()})
-            for x_name in X.columns)
-        self.split_set = dict(zip(X.columns.tolist(), var_bins))
+            for x_name in progress_bar)
+        self.split_set = {k: v for k, v in zip(X.columns.tolist(), var_bins)
+                          if v != {} and v is not None}
         return self
 
     def transform(self, X):
         """应用分割."""
         cuts = self.allcut
         cut_df = Parallel(n_jobs=self.n_jobs)(delayed(apply_cut_bin)(
-            X.loc[:, x_name], cuts[x_name]) for x_name in cuts.keys())
+            X[x_name], cuts[x_name]) for x_name in cuts.keys())
         return pd.concat(cut_df, axis=1)
