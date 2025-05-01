@@ -15,9 +15,8 @@ import seaborn as sns
 from IPython import get_ipython
 import seaborn as sns
 from sklearn.metrics import roc_curve, auc
-from autolrscorecard.utils.performance_utils import (
-    gen_ksseries, gen_cut, gen_cross)
-from autolrscorecard.utils.woebin_utils import cut_to_interval
+from ..utils.metrics import gen_ksseries
+from ..utils.cut_merge import cut_to_interval, gen_cut, gen_cross
 
 # matplotlib.use('agg')
 plt.rcParams['font.sans-serif'] = ['SimHei']
@@ -155,7 +154,7 @@ def plotdist(score, title):
     plt.show()
 
 
-def plot_bins_set(bins_set, variable_type, indep, save_path=None):
+def plot_bins_set(bins_set, perf_idx='WOE', save_path=None):
     """画分箱合集图."""
     if 'detail' in bins_set.keys():
         bins_set = {'selected_best': bins_set}
@@ -166,10 +165,10 @@ def plot_bins_set(bins_set, variable_type, indep, save_path=None):
         if save_path is None:
             _ = plt.figure(tight_layout=True)
         plt.clf()
-        _plot_bin(best_key, best_val, variable_type, indep)
+        _plot_bin(best_key, best_val, perf_idx)
         if save_path is not None:
             save_file = os.path.join(
-                save_path, '_'.join([indep, str(best_key)])+'.png')
+                save_path, best_key+'.pdf')
             plt.savefig(save_file)
         else:
             plt.show()
@@ -178,30 +177,39 @@ def plot_bins_set(bins_set, variable_type, indep, save_path=None):
         plt.close('all')
 
 
-def _plot_bin(best_key, best_val, variable_type, indep):
+def _plot_bin(best_key, best_val, perf_idx):
     """画分箱图."""
     detail = pd.DataFrame.from_dict(best_val['detail'])
     index_ = list(detail.index)
     index_[-1] = -1
     detail.index = index_
-    cut_str = cut_to_interval(best_val['cut'], variable_type)
+    cut_str = cut_to_interval(best_val['cut'])
     cut_str.update({-1: 'NaN'})
-    name = '{}\n{}'.format(indep, str(best_key))
+    
     detail.loc[:, 'Bound'] = pd.Series(cut_str)
-    detail.loc[:, 'var'] = name
-    detail.loc[:, 'describe'] = name
+    detail.loc[:, 'var'] = best_key
+    detail.loc[:, 'describe'] = best_key
     detail.loc[:, 'x'] = range(detail.shape[0])
-    ax1 = sns.barplot(data=detail.loc[:, ['all_num', 'x']], x='x',
-                      y='all_num', label='Num')
-    plt.xlabel(detail.loc[:, 'describe'].iloc[0])
+    detail.loc[:, 'Prop'] = detail.loc[:, 'all_num']\
+    	/detail.loc[:, 'all_num'].sum()
+    ax1 = sns.barplot(data=detail.loc[:, ['Prop', 'x']], x='x',
+                      y='Prop', label='Prop')
+    for index, row in detail.iterrows():
+        ax1.text(row.loc['x'], row.loc['Prop']/2, round(row.loc['Prop'], 2),
+                 color='black', ha='center')
+    plt.xlabel(detail.loc[:, 'describe'].iloc[0]+' IV: '+str(detail.loc[:, 'IV'].sum().round(4)))
     ax2 = ax1.twinx()
-    ax2 = sns.lineplot(data=detail.loc[:, ['WOE', 'x']], x='x', y='WOE',
-                       color='r', label='WOE')
+    ax2 = sns.lineplot(data=detail.loc[:, [perf_idx, 'x']], x='x', y=perf_idx,
+                       color='r', label=perf_idx)
+    
+    for index, row in detail.iterrows():
+        ax2.text(row.loc['x'], row.loc[perf_idx], round(row.loc[perf_idx], 2),
+                 color='black', ha='center')
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
     hlist = h1 + h2
     llist = l1 + l2
-    ax1.set_xticklabels(list(detail.loc[:, 'Bound']))
+    ax1.set_xticklabels(list(detail.loc[:, 'Bound']), rotation=45)
     plt.legend(handles=hlist, labels=llist, loc='upper right')
 
 
