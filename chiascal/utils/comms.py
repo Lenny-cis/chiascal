@@ -55,23 +55,22 @@ def reduce_mem(df, **kwargs):
 	print("memory usage after: {:03.2f} MB".format(mean_usage_mb))
 	return df
 
-    
+def change_precision(df, precision=6):
+	"""."""
+	def _prec(val):
+		return float(Decimal(val).quantize(Decimal('0.'+'0'*precision)))
+
+	df_dtypes = df.dtypes
+	for key, dtp in df_dtypes.items():
+		if pd.api.types.is_float_dtype(dtp):
+			df[key] = df[key].map(_prec)
+	return df
+
+
 def make_x_y(df, y_name, **kwargs):
     """生成自变量和应变量."""
-    tdf = df.convert_dtypes()
-    for key, dtp in kwargs.items():
-        tdf.loc[:, key] = tdf.loc[:, key].astype(kwargs[key])
-    ori_dtypes = tdf.dtypes
-    for key, dtp in ori_dtypes.items():
-        if pd.api.types.is_integer_dtype(dtp):
-            tdf.loc[:, key] = pd.to_numeric(
-                tdf.loc[:, key], downcast='integer')
-        if pd.api.types.is_float_dtype(dtp):
-            tdf.loc[:, key] = pd.to_numeric(
-                tdf.loc[:, key], downcast='float')
-    tdf = tdf.convert_dtypes()
-    return tdf.loc[:, tdf.columns.difference([y_name])],\
-        tdf.loc[:, y_name].map(lambda x: 1 if x else 0)
+    return df.loc[:, df.columns.difference([y_name])],\
+        df.loc[:, y_name].map(lambda x: 1 if x else 0)
 
 
 def update_dict_value(orient_dict, new_dict, func):
@@ -83,3 +82,33 @@ def update_dict_value(orient_dict, new_dict, func):
             yield (key, func(val, new_dict[key]))
         else:
             yield (key, val)
+
+
+def chunkcol_read_csv(tbl, index_cols, drop_cols=None, n_iter=5, na_values=None):
+	"""分块读取csv."""
+	raw_tbl_l = []
+	if drop_cols is None:
+		drop_cols = []
+	raw_tbl = pd.read_csv(tbl, index_col=index_cols, nrows=3) \
+		.drop(drop_cols, axis=1)
+	all_cols = list(raw_tbl.columns)
+	all_cols = [col for col in all_cols if col not in drop_cols]
+	print('num columns: {}'.format(len(all_cols)))
+	num_per_iter = int(len(all_cols)/n_iter+1)
+	res_num_len(all_cols)
+	for i in range(n_iter):
+		client = Client(n_workers=20)
+		cols = all_cols[num_per_iter*i: num_per_iter*(i+1)]
+		res_num -= len(cols)
+		print('iter: {} use columns: {} rest columns: {}'
+			  .format(i, len(cols), res_num))
+		raw_tbl = dd.read_csv(tbl, usecols=list(set(cols + index_cols)),
+							  na_values=na_values)
+		raw_tbl = raw_tbl.compute().set_index(index_cols)
+		client.close()
+		raw_tbl = reduce_mem(raw_tbl)
+		gc.collect()
+		raw_tbl_l.appen(raw_tbl)
+	return pd.concat(raw_tbl_l, axis=1).sort_index()
+
+
