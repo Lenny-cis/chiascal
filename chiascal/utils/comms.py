@@ -112,3 +112,62 @@ def chunkcol_read_csv(tbl, index_cols, drop_cols=None, n_iter=5, na_values=None)
 	return pd.concat(raw_tbl_l, axis=1).sort_index()
 
 
+def chunkcol_stats_read_csv(tbl, index_cols, stats, y_label, drop_cols=None, n_iter=5, na_values=None):
+	"""分块读取csv并做统计性筛选."""
+	raw_tbl_l = []
+	if drop_cols is None:
+		drop_cols = []
+	raw_tbl = pd.read_csv(tbl, index_col=index_cols, nrows=3) \
+		.drop(drop_cols, axis=1)
+	all_cols = list(raw_tbl.columns)
+	all_cols = [col for col in all_cols if col not in drop_cols+[y_label]]
+	print('num columns: {}'.format(len(all_cols)))
+	num_per_iter = int(len(all_cols)/n_iter+1)
+	res_num_len(all_cols)
+	for i in range(n_iter):
+		client = Client(n_workers=20)
+		cols = all_cols[num_per_iter*i: num_per_iter*(i+1)]
+		res_num -= len(cols)
+		print('iter: {} use columns: {} rest columns: {}'
+			  .format(i, len(cols), res_num))
+		raw_tbl = dd.read_csv(tbl, usecols=list(set(cols + index_cols))+[y_label],
+							  na_values=na_values)
+		raw_tbl = raw_tbl.compute().set_index(index_cols)
+		client.close()
+		raw_tbl = reduce_mem(raw_tbl)
+		gc.collect()
+		X, y = make_x_y(raw_tbl, y_label)
+		raw_tbl = stats.fit_transform(X, y)
+		raw_tbl_l.appen(raw_tbl)
+	y = pd.read_csv(
+		tbl, index_col=index_cols,
+		usecols=list(set([y_label]+index_cols)), na_values=na_values)
+	raw_tbl_l.append(y)
+	return pd.concat(raw_tbl_l, axis=1).sort_index()
+
+
+def init_folder(model_version):
+	"""初始化项目文件夹."""
+	proj_path, _ = os.path.split(os.getcwd())
+	proj = os.path.split(proj_path)[1]
+	dataPath = namedtuple(
+		'dataPath', '''data_path raw_data_path train_path train_data_path deploy_data_path
+		monitor_data_path result_path model_path final_model_path dss_path''')
+	data_path = os.path.join(proj_path, 'data')
+	raw_data_path = os.path.join(data_path, 'raw_data')
+	train_path = os.path.join(data_path, 'train_data')
+	deploy_data_path = os.path.join(data_path, 'deploy_data')
+	monitor_data_path = os.path.join(data_path, 'monitor_data')
+	result_path = os.path.join(proj_path, 'result')
+	final_model_path = os.path.join(result_path, 'final_model')
+	model_path = os.path.join(result_path, model_version)
+	train_data_path = os.path.join(train_path, model_version)
+	dss_path = os.path.join(r'/apps-data/jianinglin', proj)
+	dp = dataPath(data_path, raw_data_path, train_path, train_data_path, deploy_data_path,
+				  monitor_data_path, result_path, model_path, final_model_path,
+				  dss_path)
+	for k, fl in dp._asdict().items():
+		if not os.path.exists(fl) and k != 'dss_path':
+			os.mkdir(fl)
+	return dp
+	
