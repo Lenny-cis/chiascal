@@ -232,7 +232,7 @@ def merge_lowpct(arr, thrd_PCT):
     idxlist: list
     """
     arr, na_arr = split_na(arr)
-    total = arr.sum()
+    total = arr.sum() + na_arr.sum()
     arr_idxs = list(range(arr.shape[0]))
     idxlist = []
     while True:
@@ -330,7 +330,7 @@ def merge_lowpct_zero(arr, cut, min_PCT=0.03, min_n=None):
     return arr, cut
 
 
-def calc_woe(arr, precision=4, modify=True):
+def calc_woe(arr, precision=6, modify=True):
     """计算WOE、IV及分箱细节."""
     warnings.filterwarnings('ignore')
     arr = arr.data
@@ -401,10 +401,10 @@ def normalize(x):
     return (x - x_min)/(x_max - x_min)
 
 
-def cut_to_interval(cut, variable_type):
+def cut_to_interval(cut):
     """切分点转换为字符串区间."""
     bin_cnt = len(cut) - 1
-    if not issubclass(variable_type, (vtype.Discrete, pd.CategoricalDtype)):
+    if not isinstance(cut, dict):
         cut_str = {int(x): '(' + ','.join([str(cut[x]), str(cut[x+1])]) + ']'
                    for x in range(int(bin_cnt))}
     else:
@@ -425,7 +425,10 @@ def woe_list2dict(woelist):
 def gen_cut(ser, **kwargs):
     """生成切分点."""
     sdtype = ser.dtype
-    if pd.api.types.is_float_dtype(sdtype):
+    nunique = ser.nunique()
+    if pd.api.types.is_categorical_dtype(sdtype):
+        return gen_cut_discrete(ser)
+    if pd.api.types.is_float_dtype(sdtype) or nunique > 20:
         summ_kw = {key: val for key, val in kwargs.items()
                    if key in ['n', 'method', 'precision']}
         return gen_cut_summ(ser, **summ_kw)
@@ -435,7 +438,7 @@ def gen_cut(ser, **kwargs):
         return gen_cut_discrete(ser)
 
 
-def gen_cut_summ(ser, n=10, method='eqqt', precision=4):
+def gen_cut_summ(ser, n=10, method='eqqt', precision=6):
     """
     生成连续变量的切分点.
 
@@ -450,12 +453,14 @@ def gen_cut_summ(ser, n=10, method='eqqt', precision=4):
     rcut = list(sorted(ser.dropna().unique()))
     if len(rcut) <= 2:
         return [-np.inf, np.inf]
+    if pd.api.types.is_integer_dtype(ser.dtype):
+        precision = 0
     if method == 'eqqt':
-        cut = list(np.unique(pd.qcut(ser, n, retbins=True, duplicates='drop')
-                             [1].round(precision)))
+        cut = list(np.unique(pd.qcut(ser, n, retbins=True, duplicates='drop',
+                                     precision=precision)[1].round(precision)))
     elif method == 'eqdist':
-        cut = list(np.unique(pd.cut(ser, n, retbins=True, duplicates='drop')[1]
-                   .round(precision)))
+        cut = list(np.unique(pd.cut(ser, n, retbins=True, duplicates='drop',
+                                    precision=precision)[1].round(precision)))
     cut[0] = -np.inf
     cut[-1] = np.inf
     return cut
@@ -483,13 +488,13 @@ def gen_cross(ser, y, cut):
     sdtype = ser.dtype
     # 切分后返回bin[0, 1, ...]
     if not pd.api.types.is_categorical_dtype(sdtype):
-        df.loc[:, x] = pd.cut(ser, cut, labels=False, duplicates='drop')
+        df[x] = pd.cut(ser, cut, labels=False, duplicates='drop')
     cross = df.groupby([x, 'y']).size().unstack()
     cross.columns = cross.columns.astype('Int64')
     allsize = df.groupby([y]).size()
     na_cross = pd.DataFrame({
-        0: np.nansum([allsize.loc[0], -cross.sum().loc[0]]),
-        1: np.nansum([allsize.loc[1], -cross.sum().loc[1]])},
+        0: np.nansum([allsize.get(0, 0), -cross.sum().get(0, 0]),
+        1: np.nansum([allsize.get(1, 0), -cross.sum().get(1, 0)])},
         index=[-1])
     if pd.api.types.is_categorical_dtype(sdtype):
         if not sdtype.ordered:
