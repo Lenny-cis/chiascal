@@ -5,10 +5,18 @@ Created on Mon Feb 14 23:03:35 2022
 @author: Lenny
 """
 
+import os
+import csv
 import pandas as pd
 import numpy as np
 import math
+import logging
+
 import statsmodels.api as sm
+import lightgbm as lgb
+from collections import nametuple
+from copy import copy
+from pickle import dump, load
 from statsmodels.stats.outliers_influence import variance_inflation_factor as vif_func
 from sklearn.inspection import permutation_importance
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -20,10 +28,13 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from scipy import stats
-import logging
-
+from hyperopt import fmin, tpe, STATUS_OK, Trials
+from hyperopt.early_stop import no_progress_loss
+from timeit import default_timer as timer
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from ..utils.metrics import calc_ks, calc_auc, gen_gaintable
+from ..utils import FuncRunInfo
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +50,7 @@ class TreeSelector(BaseEstimator, TransformerMixin):
         self.n_jobs = n_jobs
         self.tree_threshold = tree_threshold
 
+    @FuncRunInfo(logger)
     def fit(self, X, y, n_repeats=5):
         """筛选."""
         logger.info('Start {} fit'.format(self.__class__.__name__))
@@ -100,17 +112,21 @@ class TreeSelector(BaseEstimator, TransformerMixin):
 class LassoLRCV(BaseEstimator, TransformerMixin):
     """lasso交叉验证逻辑回归."""
 
-    def __init__(self):
-        pass
+    def __init__(self, score_func=None, penalty='l1'):
+        self.score_func = score_func
+        self.penalty = penalty
 
+    @FuncRunInfo(logger)
     def fit(self, X, y):
         """训练."""
         logger.info('Start {} fit'.format(self.__class__.__name__))
         X_names = X.columns.to_list()
-        params = {'C': 1/np.logspace(np.log(1e-6), np.log(1), 50, base=math.e)}
-        lass_lr = LogisticRegression(penalty='l1', solver='liblinear')
+        params = {'C': 1/np.logspace(np.log(1e-2), np.log(1), 50, base=math.e)}
+        lass_lr = LogisticRegression(penalty=self.penalty, solver='liblinear')
+        scorer = self.score_func
         while True:
-            gscv = GridSearchCV(lass_lr, params)
+            gscv = GridSearchCV(estimator=lass_lr, param_grid=params,
+                               scoring=scorer)
             gscv.fit(X, y)
             if not any(gscv.best_estimator_.coef_.ravel() < 0):
                 break
@@ -120,12 +136,29 @@ class LassoLRCV(BaseEstimator, TransformerMixin):
                 if v > 0]
             X = X.loc[:, X_names]
         coef_dict = dict(zip(X_names, gscv.best_estimator_.coef_.ravel()))
-        self.lasso_vars = [k for k, v in coef_dict.items() if v > 0]
+        self.full_model = gscv
+        self.lasso_vars = [k for k, v in coef_dict.items() if v >= 0]
+        self.final_model = gscv.best_estimator_
         return self
 
     def transform(self, X):
         """应用."""
-        return X.loc[:, self.lasso_vars]
+        return pd.Series(self.final_model.predict_proba(
+            X[self.lasso_vars])[:, 1], index=X.index)
+
+	def predict(self, X):
+        """预测结果."""
+        return pd.Series(self.final_model.predict_proba(
+            X[self.lasso_vars])[:, 1], index=X.index)
+
+	def score(self, X, y, bins=20):
+        """评估模型性能."""
+        pred = self.predict(X)
+        KS_val = calc_ks(y, pred)
+        AUC_val = calc_auc(y, pred)
+        gain_tab = gen_gaintable(y, pred, bins=bins)
+        s_ = namedtuple('Score', 'KS AUC Gain_Tab')
+        return s_(KS_val, AUC_val, gain_tab)
 
 
 class StepwiseSelector(BaseEstimator, TransformerMixin):
@@ -140,6 +173,7 @@ class StepwiseSelector(BaseEstimator, TransformerMixin):
         self.value_out = value_out
         self.score_space = {}
 
+    @FuncRunInfo(logger)
     def fit(self, X, y):
         """逐步回归."""
         logger.info('Start {} fit'.format(self.__class__.__name__))
@@ -191,13 +225,13 @@ class StepwiseSelector(BaseEstimator, TransformerMixin):
             if model_exclude is not None:
                 print('Drop {:30} with {} {:.6}'
                       .format(model_exclude, self.criterion, best_f))
-                included.pop(model_exclude)
+                included.remove(model_exclude)
 
             if not changed:
                 break
         self.final_model = sm.Logit(
             y, sm.add_constant(X.loc[:, included])).fit(disp=False)
-        self.VIFs = {key: vif_func(X.loc[:, included], i)
+        self.VIFs = {key: vif_func(X.loc[:, included].values, i)
                      for i, key in enumerate(included)}
         return self
 
@@ -217,7 +251,8 @@ class StepwiseSelector(BaseEstimator, TransformerMixin):
         KS_val = calc_ks(y, pred)
         AUC_val = calc_auc(y, pred)
         gain_tab = gen_gaintable(y, pred, bins=bins)
-        return {'KS': KS_val, 'AUC': AUC_val, 'Gain_Tab': gain_tab}
+        s_ = namedtuple('Score', 'KS AUC Gain_Tab')
+        return s_(KS_val, AUC_val, gain_tab)
 
     def set_score(self, sample_space='Train', **kwargs):
         """记录模型评价结果."""
@@ -233,3 +268,4 @@ class StepwiseSelector(BaseEstimator, TransformerMixin):
              if key in inter_score_vars]
         self.score_space.update({sample_space: ss})
         return self
+
