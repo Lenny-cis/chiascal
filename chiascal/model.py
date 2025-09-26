@@ -25,10 +25,10 @@ import argparse
 from src.chiascal_webank.utils.metrics import calc_aur, calc_ks, gen_gaintable
 
 
-YCOL = 'y_9m_03vs30_fillpbco60'
+YCOL = 'y_9m_03vs30_fillpboc60'
 
 
-def pdo_transform(x, pdo, base_score, base_odss, roundn=2):
+def pdo_transform(x, pdo, base_score, base_odds, roundn=2):
     B = -pdo/np.log(2)
     A = base_score-B*np.log(base_odds)
     if roundn is not None:
@@ -62,7 +62,7 @@ def stress_quantile(y, pred, prob=False):
         tdf_filter = tdf.loc[tdf['cut']>=c]
         ks = calc_ks(tdf_filter['y'], tdf_filter['pred'], prob=prob)
         auc = calc_auc(tdf_filter['y'], tdf_filter['pred'], prob=prob)
-        c_res = {'f{c*10}%': {'KS': ks, 'AUC': auc, 'min': tdf_filter['pred'].min()}}
+        c_res = {f'{c*10}%': {'KS': ks, 'AUC': auc, 'min': tdf_filter['pred'].min()}}
         res.update(c_res)
     return res
 
@@ -92,7 +92,7 @@ def train_lgbclf(train_set, test_set, params):
     params_['min_child_samples'] = int(params_.get('min_child_samples', 20))
     lgbm = lgb.train(
         params_, train_set, valid_sets=[train_set, test_set],
-        valid_names=['trian', 'test'], **default_cv
+        valid_names=['train', 'test'], **default_cv
     )
     return lgbm
 
@@ -131,8 +131,8 @@ def objective(params, train_set, test_set, oot_set=None, save=True):
     """目标函数."""
     def adj_auc(train_auc, test_auc):
         delt_auc_ = train_auc - test_auc
-        c_abs = 1 if delt_auc_ >=0 else -1
-        c_maxd = 1 if (0.02-abs(delt_auc_)) >=0 else -1
+        c_abs = 1 if delt_auc_ >= 0 else -1
+        c_maxd = 1 if (0.02-abs(delt_auc_)) >= 0 else -1
         smt_ = ((1.5+1)/2-(1.5-1)/2*c_abs)*((3+0.75)/2-(3-0.75)/2*c_maxd)
         adj_auc_ = test_auc - abs(delt_auc_)*smt_
         return adj_auc_
@@ -141,7 +141,7 @@ def objective(params, train_set, test_set, oot_set=None, save=True):
     init_res = {'status': hpo.STATUS_OK}
     fail_res = {'status': hpo.STATUS_FAIL, 'loss': np.nan}
 #    print(params)
-    num_leaves = params.get('num_leaves': 31)
+    num_leaves = params.get('num_leaves', 31)
     max_depth = params.get('max_depth')
     min_child_samples = params.get('min_child_samples', int(train_set.num_data()/max_depth**2//4/100)*100)
     if max_depth is not None:
@@ -159,7 +159,7 @@ def objective(params, train_set, test_set, oot_set=None, save=True):
         oot_ks = eval_calc_ks(oot_set.get_label(), lgbm.predict(oot_set.get_data()))
         oot_auc = calc_auc(oot_set.get_label(), lgbm.predict(oot_set.get_data()))
         score_.update({('oot', 'auc'): oot_auc, ('oot', 'ks'): oot_ks})
-    run_time = timeer() - start
+    run_time = timer() - start
     init_res.update({'loss': loss, 'params': {**lgbm.params, 'best_iter': lgbm.best_iteration}, 'run_time': run_time, 'metric': score_})
     return init_res
 
@@ -174,13 +174,13 @@ def objective_cv(params, train_set, test_set, oot_set=None, save=True):
     start = timer()
     init_res = {'status': hpo.STATUS_OK}
     fail_res = {'status': hpo.STATUS_FAIL, 'loss': np.nan}
-    num_leaves = params.get('num_leaves': 31)
+    num_leaves = params.get('num_leaves', 31)
     max_depth = params.get('max_depth')
     min_child_samples = params.get('min_child_samples', int(train_set.num_data()/max_depth**2//4/100)*100)
 #    if max_depth is not None:
 #        if num_leaves > (2**max_depth-1):
 #            return fail_res
-    params.update({'min_child_samples': min_child_samples})
+    params.update({'min_child_samples': int(min_child_samples)})
     cv_eval, cv_params = train_cv(train_set, test_set, params)
 #    print(cv_params)
     if params.get('eval_train_metric'):
@@ -215,7 +215,7 @@ def eval_model(lgbm, dev_data, y_col, pdo_p=(20, 600, 0.07)):
     months_mets = dev_nm_X_pred \
         .groupby('apply_month').apply(lambda g: pd.Series({
             'KS': calc_ks(g[y_col].where(lambda x: x!=0.5, 0), g[f'cocuni_score'], prob=False),
-            'AUC': calc_auc(g[y_col].where(lambda x: x!=0.5, 0), g[f'cocuni_score'], prob=False)))
+            'AUC': calc_auc(g[y_col].where(lambda x: x!=0.5, 0), g[f'cocuni_score'], prob=False)}))
     for t_key, t_val in dict({'train': trn_, 'test': tst_, 'oot': oot_, 'all': {}}).items():
         pred_nm_ = multindex_filter(pred_nm_dev, dict({**t_val}))
         y_nm_ = multindex_filter(dev_nm_y, dict({**t_val}))
@@ -223,7 +223,7 @@ def eval_model(lgbm, dev_data, y_col, pdo_p=(20, 600, 0.07)):
         gain_ = gen_gaintable(y_nm_, pred_nm_, bins=20, prob=False)
         stress_ = stress_quantile(y_nm_, pred_nm_, prob=False)
         gain_h_.update({t_key: gain_})
-        stress_h_.update({t_key: stress_h_})
+        stress_h_.update({t_key: stress_})
 
     return dev_nm_X_pred, gain_h_, stress_h_, months_mets
 
@@ -239,7 +239,7 @@ def model_lgb_nm_opt(train_set, test_set, oot_set, save_file, params={}, max_eva
         algo=hpo.tpe.suggest,
         max_evals=max_evals,
         early_stop_fn=early_stop_fn,
-        trials=save_file=save_file,
+        trials_save_file=save_file,
         loss_threshold=1e-5,
         verbose=True
     )
@@ -253,7 +253,7 @@ def model_lgb_nm_opt(train_set, test_set, oot_set, save_file, params={}, max_eva
                                 'num_boost_round', 'early_stopping_rounds', 'best_iter']}
     print(best_params)
     eval_res = {}
-    best_model = lgb.train(best_params, train_set=train_set, valid_set=[train_set, test_set],
+    best_model = lgb.train(best_params, train_set=train_set, valid_sets=[train_set, test_set],
         valid_names=['train', 'test'], num_boost_round=num_boost_round,
         verbose_eval=False, evals_result=eval_res, early_stopping_rounds=early_stopping_rounds)
     return best_model, eval_res
@@ -287,7 +287,7 @@ if __name__ == '__main__':
     train_dataset, test_dataset, oot_dataset = gen_train_test_oot_dataset(dev_allmodel_feats, YCOL)
 
     alp_ = hpo.hp.qloguniform('reg_alpha', np.log(0.01), np.log(100), 1)
-    lmd_ = hpo.hp.qloguniform('reg_l2', np.log(0.01), np.log(20), 1)
+    lmd_ = alp_+hpo.hp.qloguniform('delt_l2', np.log(0.01), np.log(20), 1)
     subs_ = hpo.hp.choice('subsample', [0.7, 0.75, 0.8])
     colstree_ = hpo.hp.choice('colsample_bytree', [0.7, 0.75, 0.8])
     mcs_ = hpo.hp.quniform('min_child_samples', 1000, 2000, 100)
@@ -298,7 +298,7 @@ if __name__ == '__main__':
             'boosting_type': 'goss',
             'max_depth': 3,
             'num_leaves': hpo.hp.randint('3_num_leaves', 4, 8),
-            'colsample_by_tree': colstree_,
+            'colsample_bytree': colstree_,
             'learning_rate': 0.1,
             'reg_alpha': alp_,
             'reg_lambda': lmd_,
@@ -312,8 +312,8 @@ if __name__ == '__main__':
         {
             'boosting_type': 'goss',
             'max_depth': 4,
-            'num_leaves': hpo.hp.randint('3_num_leaves', 6, 16),
-            'colsample_by_tree': colstree_,
+            'num_leaves': hpo.hp.randint('4_num_leaves', 6, 16),
+            'colsample_bytree': colstree_,
             'learning_rate': 0.1,
             'reg_alpha': alp_,
             'reg_lambda': lmd_,
@@ -327,8 +327,8 @@ if __name__ == '__main__':
         {
             'boosting_type': 'goss',
             'max_depth': 5,
-            'num_leaves': hpo.hp.randint('3_num_leaves', 8, 32),
-            'colsample_by_tree': colstree_,
+            'num_leaves': hpo.hp.randint('5_num_leaves', 8, 32),
+            'colsample_bytree': colstree_,
             'learning_rate': 0.1,
             'reg_alpha': alp_,
             'reg_lambda': lmd_,
@@ -354,11 +354,11 @@ if __name__ == '__main__':
     allmodel_fimp.loc[:, 'gain_pct'] = allmodel_fimp.loc[:, 'gain']/allmodel_fimp.loc[:, 'gain'].sum()
     allmodel_eval_res = \
         eval_model(allmodel_lgbm, dev_allmodel_feats, YCOL)
-    with open(os.path.jon(model_path, f'{prefix}_lgbm_20240223.pkl'), 'wb') as f:
+    with open(os.path.join(model_path, f'{prefix}_lgbm_20240223.pkl'), 'wb') as f:
         pickle.dump(allmodel_lgbm, f)
-    with open(os.path.jon(model_path, f'{prefix}_eval_20240223.pkl'), 'wb') as f:
+    with open(os.path.join(model_path, f'{prefix}_eval_20240223.pkl'), 'wb') as f:
         pickle.dump(allmodel_eval, f)
-    with open(os.path.jon(model_path, f'{prefix}_fimp_20240223.pkl'), 'wb') as f:
+    with open(os.path.join(model_path, f'{prefix}_fimp_20240223.pkl'), 'wb') as f:
         pickle.dump(allmodel_fimp, f)
-    with open(os.path.jon(model_path, f'{prefix}_eval_res_20240223.pkl'), 'wb') as f:
+    with open(os.path.join(model_path, f'{prefix}_eval_res_20240223.pkl'), 'wb') as f:
         pickle.dump(allmodel_eval_res, f)
