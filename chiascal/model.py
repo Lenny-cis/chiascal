@@ -28,6 +28,16 @@ from src.chiascal_webank.utils.metrics import calc_aur, calc_ks, gen_gaintable
 YCOL = 'y_9m_03vs30_fillpboc60'
 
 
+def split_train_test_oot(df, y_col):
+    tdf = df.copy()
+    tdf.loc[tdf['apply_month']>='2023-01', 'split'] = 't02_OOT'
+    month_y = tdf.loc[tdf['split']!='t02_OOT', ['apply_month', y_col]]
+    train_, test_ = train_test_split(tdf.loc[tdf['split']!='t02_OOT', :], test_size=0.3, random_state=2024, stratify=month_y)
+    tdf.loc[train_.index, 'split'] = 't00_Train'
+    tdf.loc[test_.index, 'split'] = 't01_Test'
+    return tdf
+
+
 def pdo_transform(x, pdo, base_score, base_odds, roundn=2):
     B = -pdo/np.log(2)
     A = base_score-B*np.log(base_odds)
