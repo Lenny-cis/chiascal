@@ -229,4 +229,136 @@ def eval_model(lgbm, dev_data, y_col, pdo_p=(20, 600, 0.07)):
 
 
 def model_lgb_nm_opt(train_set, test_set, oot_set, save_file, params={}, max_evals=100, trial_early_stopping_rounds=30):
-    
+    m_res = []
+    early_stop_fn = no_progress_loss(trial_early_stopping_rounds)
+    object_func = hpo.partial(
+        objective_cv, train_set=train_set, test_set=test_set, oot_set=oot_set, save=True)
+    best = hpo.fmin(
+        fn=object_func,
+        space=params,
+        algo=hpo.tpe.suggest,
+        max_evals=max_evals,
+        early_stop_fn=early_stop_fn,
+        trials=save_file=save_file,
+        loss_threshold=1e-5,
+        verbose=True
+    )
+    with open(save_file, 'rb') as f:
+        train_trials = pickle.load(f)
+    best_params = {k: v for k, v in train_trials.best_trial['result']['params'].items()}
+    num_boost_round = best_params.get('num_boost_round') or best_params.get('num_iterations')
+    early_stopping_rounds = best_params.get('early_stopping_round') or best_params.get('early_stopping_rounds')
+    best_params = {k: v for k, v in best_params.items()
+                   if k not in ['num_iterations', 'categorical_column', 'early_stopping_round',
+                                'num_boost_round', 'early_stopping_rounds', 'best_iter']}
+    print(best_params)
+    eval_res = {}
+    best_model = lgb.train(best_params, train_set=train_set, valid_set=[train_set, test_set],
+        valid_names=['train', 'test'], num_boost_round=num_boost_round,
+        verbose_eval=False, evals_result=eval_res, early_stopping_rounds=early_stopping_rounds)
+    return best_model, eval_res
+
+
+def gen_train_test_oot_dataset(df, y_name):
+    dev_dataset = lgb.Dataset(df.drop(columns=[y_name]), df.loc[:, [y_name]], free_raw_data=False, params={'verbose': -1}).construct()
+    train_ids = [x for x, v in enumerate(df.index.get_level_values('split')) if v == 't00_Train']
+    test_ids = [x for x, v in enumerate(df.index.get_level_values('split')) if v == 't01_Test']
+    oot_ids = [x for x, v in enumerate(df.index.get_level_values('split')) if v == 't02_OOT']
+    train_dataset = dev_dataset.subset(train_ids).construct()
+    test_dataset = dev_dataset.subset(test_ids).construct()
+    oot_dataset = dev_dataset.subset(oot_ids).construct()
+    return train_dataset, test_dataset, oot_dataset
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='manual to this script')
+    parser.add_argument('--train_dev_data_file', type=str)
+    parser.add_argument('--model_path', type=str)
+    parser.add_argument('--ban_features', type=str, default=None)
+    args = parser.parse_args()
+    print(args.train_dev_data_file, args.model_path, args.ban_features)
+    model_path, prefix = args.model_path.split(' ')
+    ban_feats = []
+    if args.ban_features is not None:
+        ban_feats = args.ban_feats.split(' ')
+    print(model_path, prefix, ban_feats)
+    dev_allmodel_feats = pd.read_pickle(args.train_dev_data_file).drop(columns=ban_feats)
+    print(dev_allmodel_feats.columns)
+    train_dataset, test_dataset, oot_dataset = gen_train_test_oot_dataset(dev_allmodel_feats, YCOL)
+
+    alp_ = hpo.hp.qloguniform('reg_alpha', np.log(0.01), np.log(100), 1)
+    lmd_ = hpo.hp.qloguniform('reg_l2', np.log(0.01), np.log(20), 1)
+    subs_ = hpo.hp.choice('subsample', [0.7, 0.75, 0.8])
+    colstree_ = hpo.hp.choice('colsample_bytree', [0.7, 0.75, 0.8])
+    mcs_ = hpo.hp.quniform('min_child_samples', 1000, 2000, 100)
+    tr_ = hpo.hp.choice('top_rate', [0.2, 0.3, 0.4])
+    or_ = hpo.hp.choice('other_rate', [0.1, 0.2, 0.3])
+    allmodel_p = hpo.hp.choice('max_depth', [
+        {
+            'boosting_type': 'goss',
+            'max_depth': 3,
+            'num_leaves': hpo.hp.randint('3_num_leaves', 4, 8),
+            'colsample_by_tree': colstree_,
+            'learning_rate': 0.1,
+            'reg_alpha': alp_,
+            'reg_lambda': lmd_,
+            'num_boost_round': 500,
+            'early_stopping_rounds': 30,
+            'n_jobs': 45,
+            'min_child_samples': mcs_,
+            'top_rate': tr_,
+            'other_rate': or_
+        },
+        {
+            'boosting_type': 'goss',
+            'max_depth': 4,
+            'num_leaves': hpo.hp.randint('3_num_leaves', 6, 16),
+            'colsample_by_tree': colstree_,
+            'learning_rate': 0.1,
+            'reg_alpha': alp_,
+            'reg_lambda': lmd_,
+            'num_boost_round': 500,
+            'early_stopping_rounds': 30,
+            'n_jobs': 45,
+            'min_child_samples': mcs_,
+            'top_rate': tr_,
+            'other_rate': or_
+        },
+        {
+            'boosting_type': 'goss',
+            'max_depth': 5,
+            'num_leaves': hpo.hp.randint('3_num_leaves', 8, 32),
+            'colsample_by_tree': colstree_,
+            'learning_rate': 0.1,
+            'reg_alpha': alp_,
+            'reg_lambda': lmd_,
+            'num_boost_round': 500,
+            'early_stopping_rounds': 30,
+            'n_jobs': 45,
+            'min_child_samples': mcs_,
+            'top_rate': tr_,
+            'other_rate': or_
+        }
+    ])
+    timestr = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+    train_file = os.path.join(model_path, 'trials', f'{prefix}_train_trials_{timestr}.pkl')
+    allmodel_lgb_func = partial(
+        model_lgb_nm_opt, save_file=train_file,
+        max_evals=1000, trial_early_stopping_rounds=100)
+    allmodel_lgbm, allmodel_eval = \
+        allmodel_lgb_func(train_dataset, test_dataset, oot_dataset, params=allmodel_p)
+    allmodel_fimp = \
+        pd.DataFrame(allmodel_lgbm.feature_importance(importance_type='gain'),
+                     index=allmodel_lgbm.feature_name(), columns=['gain']) \
+            .sort_values('gain', ascending=False)
+    allmodel_fimp.loc[:, 'gain_pct'] = allmodel_fimp.loc[:, 'gain']/allmodel_fimp.loc[:, 'gain'].sum()
+    allmodel_eval_res = \
+        eval_model(allmodel_lgbm, dev_allmodel_feats, YCOL)
+    with open(os.path.jon(model_path, f'{prefix}_lgbm_20240223.pkl'), 'wb') as f:
+        pickle.dump(allmodel_lgbm, f)
+    with open(os.path.jon(model_path, f'{prefix}_eval_20240223.pkl'), 'wb') as f:
+        pickle.dump(allmodel_eval, f)
+    with open(os.path.jon(model_path, f'{prefix}_fimp_20240223.pkl'), 'wb') as f:
+        pickle.dump(allmodel_fimp, f)
+    with open(os.path.jon(model_path, f'{prefix}_eval_res_20240223.pkl'), 'wb') as f:
+        pickle.dump(allmodel_eval_res, f)
