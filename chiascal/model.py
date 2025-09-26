@@ -51,3 +51,17 @@ def multindex_filter(df, mi_dict={}):
     if isinstance(df, pd.DataFrame):
         return df.loc[tuple(idsl), :].copy()
     return df.loc[tuple(idsl)].copy()
+
+
+def stress_quantile(y, pred, prob=False):
+    tdf = pd.DataFrame({'y': y, 'pred': 1-pred if prob else pred})
+    tdf.loc[:, 'cut'] = pd.qcut(
+        tdf.loc[:, 'pred'], 10, labels=False, duplicates='drop')
+    res = {}
+    for c in sorted(tdf['cut'].unique()):
+        tdf_filter = tdf.loc[tdf['cut']>=c]
+        ks = calc_ks(tdf_filter['y'], tdf_filter['pred'], prob=prob)
+        auc = calc_auc(tdf_filter['y'], tdf_filter['pred'], prob=prob)
+        c_res = {'f{c*10}%': {'KS': ks, 'AUC': auc, 'min': tdf_filter['pred'].min()}}
+        res.update(c_res)
+    return res
