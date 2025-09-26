@@ -11,7 +11,7 @@ def init_proj_folder(model_version='v01'):
         '''proj_path data_path share_data_path ver_data_path deploy_data_path
         monitor_data_path raw_data_path processed_data_path
         intermediate_data_path report_set_path report_path model_set_path
-        model_path final_mode_path dss_path notebook_set_path notebook_path
+        model_path final_model_path dss_path notebook_set_path notebook_path
         ''')
     data_path = os.path.join(proj_path, 'data')
     share_data_path = os.path.join(data_path, 'share')
@@ -22,10 +22,10 @@ def init_proj_folder(model_version='v01'):
     processed_data_path = os.path.join(ver_data_path, 'processed')
     intermediate_data_path = os.path.join(ver_data_path, 'intermediate')
 
-    report_set_path = os.path.join(proj_path, 'report')
+    report_set_path = os.path.join(proj_path, 'reports')
     report_path = os.path.join(report_set_path, model_version)
 
-    model_set_path = os.path.join(proj_path, 'model')
+    model_set_path = os.path.join(proj_path, 'models')
     model_path = os.path.join(model_set_path, model_version)
     final_model_path = os.path.join(model_set_path, 'final')
 
@@ -86,20 +86,21 @@ def init_proj_folder(model_version='v01'):
                 f.write("del submod_names\n")
                 f.write("del pkg_1\n")
                 f.write("del pkg_name\n")
-                f.write("del pkg_util\n")
+                f.write("del pkgutil\n")
                 f.write("del importlib\n")
     return path_set
 
 
-def get_proj_folder(model_version='v01'):
-    proj_path = os.getcwd()
+def get_proj_folder():
+    note_path, model_version = os.path.split(os.getcwd())
+    proj_path = os.path.split(note_path)[0]
     proj = os.path.split(proj_path)[1]
     PathSet = namedtuple(
         'PathSet',
         '''proj_path data_path share_data_path ver_data_path deploy_data_path
         monitor_data_path raw_data_path processed_data_path
         intermediate_data_path report_set_path report_path model_set_path
-        model_path final_mode_path dss_path notebook_set_path notebook_path
+        model_path final_model_path dss_path notebook_set_path notebook_path
         ''')
     data_path = os.path.join(proj_path, 'data')
     share_data_path = os.path.join(data_path, 'share')
@@ -110,10 +111,10 @@ def get_proj_folder(model_version='v01'):
     processed_data_path = os.path.join(ver_data_path, 'processed')
     intermediate_data_path = os.path.join(ver_data_path, 'intermediate')
 
-    report_set_path = os.path.join(proj_path, 'report')
+    report_set_path = os.path.join(proj_path, 'reports')
     report_path = os.path.join(report_set_path, model_version)
 
-    model_set_path = os.path.join(proj_path, 'model')
+    model_set_path = os.path.join(proj_path, 'models')
     model_path = os.path.join(model_set_path, model_version)
     final_model_path = os.path.join(model_set_path, 'final')
 
@@ -140,10 +141,6 @@ def get_proj_folder(model_version='v01'):
         intermediate_data_path, report_set_path, report_path, model_set_path,
         model_path, final_model_path, dss_path, notebook_set_path,
         notebook_path, src_path
-    )
-    src_path_set = SrcPath(
-        src_path, src_data_path, src_feature_path, src_model_path,
-        src_report_path, src_viz_path
     )
     return path_set
 
