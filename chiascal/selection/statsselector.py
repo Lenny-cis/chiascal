@@ -36,7 +36,7 @@ def concentration_ratio(ser):
     """计算集中度."""
     if ser.isna().all():
         return np.nan
-    max_val = stats.mode(ser.dropna(), nam_policy='omit')[1][0]
+    max_val = stats.mode(ser.dropna(), nan_policy='omit', keepdims=False)[1]
     return max_val / ser.shape[0]
 
 
@@ -73,7 +73,7 @@ class StatsSelector(TransformerMixin, BaseEstimator):
         self.thresholds = {
             'nomissing': nomissing,
             'noconcentration': noconcentration,
-	        'nunique': nunique,
+            'nunique': nunique,
             'IV': IV}
         self.n_jobs = n_jobs
         self.input_vars = {}
@@ -82,7 +82,7 @@ class StatsSelector(TransformerMixin, BaseEstimator):
     def bind_funcs(self, funcs):
         """绑定外部函数."""
         if not isinstance(funcs, list):
-        	funcs = [funcs]
+            funcs = [funcs]
         for func in funcs:
             setattr(self, func.__name__, MethodType(func, self))
             self.register_funcs[func.__name__] = func
@@ -113,13 +113,13 @@ class StatsSelector(TransformerMixin, BaseEstimator):
     @register_funcs.register
     def IV(self, ser, y=None):
         """."""
-        return iv(ser)
+        return iv(ser, y)
 
-	def _var_fit(self, x, y):
+    def _var_fit(self, x, y):
         res_ = {
-        	key: val(self, x, y)
-        	for key, val in self.register_funcs.items()
-    	}
+            key: val(self, x, y)
+            for key, val in self.register_funcs.items()
+        }
         res_.update({'drop_reason': key for key, val in res_.items()
                      if val < self.thresholds.get(key)})
         return res_
@@ -135,17 +135,18 @@ class StatsSelector(TransformerMixin, BaseEstimator):
 
         # stats = []
         # for x_name in X.columns:
-        #     stats.append(var_stats(X.loc[:, x_name], y, init_p))
+        #     stats.append(self._var_fit(X.loc[:, x_name], y))
         stats = Parallel(n_jobs=self.n_jobs)(
             delayed(self._var_fit)(X[x_name], y)
             for x_name in progress_bar)
         tdict = dict(zip(X.columns.tolist(), stats))
         self.input_vars.update(tdict)
         self.output_vars.update({
-            key: val for key, val in tdict().items()
+            key: val for key, val in tdict.items()
             if pd.isna(val.get('drop_reason'))})
         return self
 
+    @FuncRunInfo(logger)
     def transform(self, X):
         """应用."""
         tran_x = [x_n for x_n in X.columns if x_n in self.output_vars.keys()]
@@ -153,12 +154,12 @@ class StatsSelector(TransformerMixin, BaseEstimator):
 
     def get_IVs(self):
         """."""
-        return {key: val['IV'] for key, val in self.output_vars.keys()}
+        return {key: val['IV'] for key, val in self.output_vars.items()}
 
-	@property
+    @property
     def rept(self):
         """Report DF."""
-        fil = OrderDict({k: 0 for k in self.register_funcs.keys()})
+        fil = OrderedDict({k: 0 for k in self.register_funcs.keys()})
         fil.update({
             key: val for key, val in Counter([
                 r.get('drop_reason')
@@ -185,7 +186,7 @@ class PSISelector(TransformerMixin, BaseEstimator):
         self.input_vars = {}
         self.output_vars = {}
 
-	@FuncRunInfo(logger)
+    @FuncRunInfo(logger)
     def fit(self, X, y, rep_X):
         """筛选."""
         tqdm_options = {'iterable': X.columns.tolist(), 'disable': False,
@@ -197,16 +198,16 @@ class PSISelector(TransformerMixin, BaseEstimator):
         tdict = dict(zip(X.columns.tolist(), psi_fil))
         self.input_vars.update(tdict)
         self.output_vars.update({
-            key: val for key, val in tdict().items()
+            key: val for key, val in tdict.items()
             if val <= self.psi})
-        return self      
+        return self
 
     def transform(self, X):
         """应用."""
         tran_x = [x_n for x_n in X.columns if x_n in self.output_vars.keys()]
         return X.loc[:, tran_x]
 
-	@property
+    @property
     def rept(self):
         """Report DF."""
         in_num = len(self.input_vars.keys())
@@ -217,9 +218,9 @@ class PSISelector(TransformerMixin, BaseEstimator):
         summ = pd.DataFrame.from_dict({
             'PSI': {'input': in_num, 'filter': in_num-ou_num,
                     'output': ou_num}},
-			orient='index')
+            orient='index')
         return {'summary': summ, 'detail': det}
-        
+
 # def var_stats(ser, y, thresholds):
 #     """变量统计信息."""
 #     missing_ratio_ = missing_ratio(ser)

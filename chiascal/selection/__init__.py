@@ -6,4 +6,4 @@ Created on Wed Feb 16 17:43:24 2022
 """
 
 from .statsselector import StatsSelector, PSISelector
-from .modelselector import TreeSelector, LassoLRCV, StepwiseSelector, HyperoptLgb
+from .modelselector import TreeSelector, LassoLRCV, StepwiseSelector

@@ -426,7 +426,7 @@ def gen_cut(ser, **kwargs):
     """生成切分点."""
     sdtype = ser.dtype
     nunique = ser.nunique()
-    if pd.api.types.is_categorical_dtype(sdtype):
+    if isinstance(sdtype, pd.CategoricalDtype):
         return gen_cut_discrete(ser)
     if pd.api.types.is_float_dtype(sdtype) or nunique > 20:
         summ_kw = {key: val for key, val in kwargs.items()
@@ -434,7 +434,7 @@ def gen_cut(ser, **kwargs):
         return gen_cut_summ(ser, **summ_kw)
     if pd.api.types.is_integer_dtype(sdtype):
         return gen_cut_count(ser)
-    if pd.api.types.is_categorical_dtype(sdtype):
+    if isinstance(sdtype, pd.CategoricalDtype):
         return gen_cut_discrete(ser)
 
 
@@ -487,16 +487,16 @@ def gen_cross(ser, y, cut):
     df = pd.DataFrame({x: ser, 'y': y})
     sdtype = ser.dtype
     # 切分后返回bin[0, 1, ...]
-    if not pd.api.types.is_categorical_dtype(sdtype):
+    if not isinstance(sdtype, pd.CategoricalDtype):
         df[x] = pd.cut(ser, cut, labels=False, duplicates='drop')
     cross = df.groupby([x, 'y']).size().unstack()
     cross.columns = cross.columns.astype('Int64')
     allsize = df.groupby([y]).size()
     na_cross = pd.DataFrame({
-        0: np.nansum([allsize.get(0, 0), -cross.sum().get(0, 0]),
+        0: np.nansum([allsize.get(0, 0), -cross.sum().get(0, 0)]),
         1: np.nansum([allsize.get(1, 0), -cross.sum().get(1, 0)])},
         index=[-1])
-    if pd.api.types.is_categorical_dtype(sdtype):
+    if isinstance(sdtype, pd.CategoricalDtype):
         if not sdtype.ordered:
             cross['eventRate'] = cross[1]/np.nansum(cross, axis=1)
             cross.sort_values('eventRate', ascending=False, inplace=True)
@@ -522,7 +522,7 @@ def is_y_zero(cross):
 def apply_cut_bin(ser, cut):
     """Cut to bin."""
     sdtype = ser.dtype
-    if pd.api.types.is_categorical_dtype(sdtype):
+    if isinstance(sdtype, pd.CategoricalDtype):
         return ser.map(cut).fillna(-1)
     return pd.cut(ser, cut, labels=False).fillna(-1)
 

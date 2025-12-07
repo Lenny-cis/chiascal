@@ -5,18 +5,18 @@ Created on Mon Feb 14 23:03:35 2022
 @author: Lenny
 """
 
-import os
-import csv
+# import os
+# import csv
 import pandas as pd
 import numpy as np
 import math
 import logging
 
 import statsmodels.api as sm
-import lightgbm as lgb
-from collections import nametuple
-from copy import copy
-from pickle import dump, load
+# import lightgbm as lgb
+from collections import namedtuple
+# from copy import copy
+# from pickle import dump, load
 from statsmodels.stats.outliers_influence import variance_inflation_factor as vif_func
 from sklearn.inspection import permutation_importance
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -27,11 +27,11 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
-from scipy import stats
-from hyperopt import fmin, tpe, STATUS_OK, Trials
-from hyperopt.early_stop import no_progress_loss
-from timeit import default_timer as timer
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
+# from scipy import stats
+# from hyperopt import fmin, tpe, STATUS_OK, Trials
+# from hyperopt.early_stop import no_progress_loss
+# from timeit import default_timer as timer
+# from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from ..utils.metrics import calc_ks, calc_auc, gen_gaintable
 from ..utils import FuncRunInfo
@@ -146,12 +146,12 @@ class LassoLRCV(BaseEstimator, TransformerMixin):
         return pd.Series(self.final_model.predict_proba(
             X[self.lasso_vars])[:, 1], index=X.index)
 
-	def predict(self, X):
+    def predict(self, X):
         """预测结果."""
         return pd.Series(self.final_model.predict_proba(
             X[self.lasso_vars])[:, 1], index=X.index)
 
-	def score(self, X, y, bins=20):
+    def score(self, X, y, bins=20):
         """评估模型性能."""
         pred = self.predict(X)
         KS_val = calc_ks(y, pred)
@@ -161,7 +161,7 @@ class LassoLRCV(BaseEstimator, TransformerMixin):
         return s_(KS_val, AUC_val, gain_tab)
 
 
-class StepwiseSelector(BaseEstimator, TransformerMixin):
+class StepwiseSelector(TransformerMixin, BaseEstimator):
     """逐步回归."""
 
     def __init__(self, p_value_in=0.05, p_value_out=0.01, criterion='aic',

@@ -85,7 +85,7 @@ class BinCutter(TransformerMixin, BaseEstimator):
         """切分器的列联表."""
         return {key: val['cross'] for key, val in self.split_set.items()}
 
-    @FuncRuninfo
+    @FuncRunInfo(logger)
     def fit(self, X, y, **kwargs):
         """分割X和y."""
         init_p = dict(self.get_params())

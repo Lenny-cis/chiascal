@@ -7,7 +7,7 @@ class FuncRunInfo:
     def __init__(self, logger):
         self.logger = logger
 
-	def __call__(self, func):
+    def __call__(self, func):
         """call."""
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -18,7 +18,7 @@ class FuncRunInfo:
             ret = func(*args, **kwargs)
             run_time = round(time.time() - ss, 2)
             self.logger.info(
-            	f'End {cls_name} {func_name} RunTime: {run_time}s')
+                f'End {cls_name} {func_name} RunTime: {run_time}s')
             return ret
         return wrapper
 
@@ -29,34 +29,34 @@ class Register(dict):
         super().__init__(*args, **kwargs)
         self._dict = {}
 
-	def __setitem__(self, key, value):
+    def __setitem__(self, key, value):
         """set."""
         self.dict[key] = value
 
-	def __getitem__(self, key):
+    def __getitem__(self, key):
         """get."""
         return self._dict[key]
 
-	def __contains__(self, key):
+    def __contains__(self, key):
         """contains."""
         return key in self._dict
 
-	def __str__(self):
+    def __str__(self):
         """str."""
         return str(self._dict)
 
-	def keys(self):
+    def keys(self):
         """key."""
         return self._dict.keys()
 
-	def values(self):
+    def values(self):
         """values."""
         return self._dict.values()
 
-	def items(self):
+    def items(self):
         """items."""
         return self._dict.items()
 
-	def register(self, target):
+    def register(self, target):
         """注册."""
         self._dict[target.__name__] = target

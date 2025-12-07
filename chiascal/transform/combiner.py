@@ -91,17 +91,16 @@ def gen_bulkhead_bin(arr, merge_idxs, I_min, U_min, variable_shape,
                      tolerance, cut, precision, modify):
     """计算变量分箱结果."""
     var_bin = gen_merged_bin(arr, merge_idxs, I_min, U_min,
-                             variable_shape, tolerance, precision, modity)
-    cut = cut_adjust(cut, merge_idxs)
+                             variable_shape, tolerance, precision, modify)
     if var_bin is not None:
         cut = cut_adjust(cut, merge_idxs)
         var_bin.update({'cut': cut})
     return var_bin
 
 
-def calc_details(masked_arr, threshold, precision, modity):
+def calc_details(masked_arr, threshold, precision, modify):
     """分箱细节."""
-    detail = calc_woe(masked_arr, precision, modity)
+    detail = calc_woe(masked_arr, precision, modify)
     woes = detail['WOE']
     tol = calc_min_tol(woes[:-1])
     if tol< threshold:
@@ -116,7 +115,7 @@ def calc_details(masked_arr, threshold, precision, modity):
 
 
 def gen_merged_bin(arr, merge_idxs, I_min, U_min, variable_shape,
-                   tolerance, precision, modity):
+                   tolerance, precision, modify):
     """生成合并结果."""
     # 根据选取的切点合并列联表
     t_arr, na_arr = split_na(arr)
@@ -150,9 +149,10 @@ class Combiner(BaseBinner):
                          cut_method, tolerance, precision, n_jobs)
         self.variable_shape = variable_shape
         self.search_method = search_method
-        self.modity = modify
+        self.modify = modify
         self.input_vars = {}
 
+    @FuncRunInfo(logger)
     def _gen_rawbins(self, X, y, **kwargs):
         """生产所有组合."""
         def _gen_bins(i_cutter, **i_p):
@@ -164,7 +164,7 @@ class Combiner(BaseBinner):
             if len(xbin) <= 0:
                 return
             return xbin
-            
+
         init_p = dict(self.get_params())
         del init_p['search_method']
         cutters = BinCutter(self.cut_cnt, self.min_PCT, self.min_n,
@@ -180,6 +180,14 @@ class Combiner(BaseBinner):
                       for key, val in init_p.items()
                       if key not in ban_p}, **{'var': x_name}))
             for x_name in progress_bar)
+        # # debug
+        # res = []
+        # for x_name in X.columns.tolist():
+        #     res.append(_gen_bins(
+        #         cutters.split_set.get(x_name),
+        #         **dict(**{key: kwargs.get(key, {}).get(x_name, val)
+        #                   for key, val in init_p.items()
+        #                   if key not in ban_p}, **{'var': x_name})))
         self.input_vars = {key: val for key, val in
                            dict(zip(X.columns.tolist(), res)).items()
                            if val is not None}
@@ -257,11 +265,11 @@ class Combiner(BaseBinner):
         self.output_vars.update(update_output_vars)
         return self
 
-	def get_IVs(self):
+    def get_IVs(self):
         """获取IV列表."""
         return {key: val['IV'] for key, val in self.output_vars.items()}
 
-	@property
+    @property
     def rept(self):
         """Report DF."""
         def binset_to_tab(detail, cut):
@@ -272,25 +280,25 @@ class Combiner(BaseBinner):
             t_str_cut.update({-1: 'NAN'})
             tdf.loc[:,'bound'] = pd.Series(t_str_cut)
             return tdf[['bound', 'all_num', 'event_num', 'event_rate',
-            			'Prop', 'WOE']]
+                        'Prop', 'WOE']]
 
-		in_num = len(self.input_vars.keys())
+        in_num = len(self.input_vars.keys())
         ou_num = len(self.output_vars.keys())
         summ = pd.DataFrame.from_dict({
-        	'WOE': {'input': in_num, 'filter': in_num-ou_num,
-        			'output': ou_num}},
-        	orient='index')
+            'WOE': {'input': in_num, 'filter': in_num-ou_num,
+                    'output': ou_num}},
+            orient='index')
         det = pd.concat({key: binset_to_tab(val['detail'], val['cut'])
-        				 for key, val in self.output_vars.items()},
-        				axis=0)
+                         for key, val in self.output_vars.items()},
+                        axis=0)
         return Report_tuple(summ, det)
 
-	def sqlstmt(self, mvars):
+    def sqlstmt(self, mvars):
         """Cut to woe sql代码."""
         sqlstmt = ',\n'.join([
-        	f"case when {k} is null then {v['detail']['WOE'][-1]}"
-        	+ "".join([f"\n\twhen {k}<={c} then {w}"
-        			   for c, w in zip(v['cut'][1:], v['detail']['WOE'][:-2])])
-        	+ f"\n\telse {v['detail']['WOE'][-2]} end as {k}_woe"
-        	for k, v in self.output_vars.items() if k in mvars])
+            f"case when {k} is null then {v['detail']['WOE'][-1]}"
+            + "".join([f"\n\twhen {k}<={c} then {w}"
+                       for c, w in zip(v['cut'][1:], v['detail']['WOE'][:-2])])
+            + f"\n\telse {v['detail']['WOE'][-2]} end as {k}_woe"
+            for k, v in self.output_vars.items() if k in mvars])
         return sqlstmt
