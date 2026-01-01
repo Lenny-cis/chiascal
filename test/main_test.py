@@ -13,7 +13,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 from sklearn.pipeline import Pipeline
 
-sys.path.append(r'D:\risk_code\chiascal')
+
+src_path = os.path.split(os.getcwd())[0]
+sys.path.append(src_path)
 from chiascal.utils import make_x_y
 from chiascal.selection import StatsSelector, PSISelector, StepwiseSelector
 from chiascal.transform import Combiner
@@ -40,7 +42,25 @@ def split_train_test_oot(df, y_col):
     return tdf
 
 
-test_data_file = os.path.abspath(r'D:\risk_code\chiascal\test\data\test_data.xlsx')
+def multindex_filter(df, mi_dict={}):
+    idx = pd.IndexSlice
+    if not mi_dict:
+        return df
+    if len(set(list(mi_dict.keys())).difference(df.index.names))>0:
+        raise ValueError('Wrong Index Name')
+    idsl = df.index.nlevels * [slice(None)]
+    for k, v in mi_dict.items():
+        k_idx = list(df.index.names).index(k)
+        if isinstance(v, (slice, list)):
+            idsl[k_idx] = v
+        else:
+            idsl[k_idx] = [v]
+    if isinstance(df, pd.DataFrame):
+        return df.loc[idx[tuple(idsl)], :].copy()
+    return df.loc[idx[tuple(idsl)]].copy()
+
+
+test_data_file = os.path.join(src_path, 'test', 'data', 'test_data.xlsx')
 test_data = pd.read_excel(test_data_file)
 test_data = shuffle_test_data(test_data)
 
@@ -50,12 +70,12 @@ I_COL = '客户名称'
 test_data.set_index(I_COL, inplace=True)
 test_data = split_train_test_oot(test_data, Y_COL)
 X_data, y_data = make_x_y(test_data, Y_COL)
-X_trn = X_data.loc[pd.IndexSlice[:, :, "t00_Train"]]
-X_tst = X_data.loc[pd.IndexSlice[:, :, "t01_Test"]]
-X_oot = X_data.loc[pd.IndexSlice[:, :, "t02_OOT"]]
-y_trn = y_data.loc[pd.IndexSlice[:, :, "t00_Train"]]
-y_tst = y_data.loc[pd.IndexSlice[:, :, "t01_Test"]]
-y_oot = y_data.loc[pd.IndexSlice[:, :, "t02_OOT"]]
+X_trn = multindex_filter(X_data, {'split': "t00_Train"})
+X_tst = multindex_filter(X_data, {'split': "t01_Test"})
+X_oot = multindex_filter(X_data, {'split': "t02_OOT"})
+y_trn = multindex_filter(y_data, {'split': "t00_Train"})
+y_tst = multindex_filter(y_data, {'split': "t01_Test"})
+y_oot = multindex_filter(y_data, {'split': "t02_OOT"})
 
 ss1 = StatsSelector(nomissing=0.05, noconcentration=0.05, nunique=0, IV=0.01)
 ps1 = PSISelector(psi=0.1, n_jobs=-1)
@@ -78,3 +98,67 @@ oot_score = pl.score(X_oot, y_oot)
 print(trn_score.KS, trn_score.AUC)
 print(tst_score.KS, tst_score.AUC)
 print(oot_score.KS, oot_score.AUC)
+# %%
+text = '''
+remiss,cell,smear,infil,li,blast,temp
+1,.8,.83,.66,1.9,1.1,.996
+1,.9,.36,.32,1.4,.74,.992
+0,.8,.88,.7,.8,.176,.982
+0,1,.87,.87,.7,1.053,.986
+1,.9,.75,.68,1.3,.519,.98
+0,1,.65,.65,.6,.519,.982
+1,.95,.97,.92,1,1.23,.992
+0,.95,.87,.83,1.9,1.354,1.02
+0,1,.45,.45,.8,.322,.999
+0,.95,.36,.34,.5,0,1.038
+0,.85,.39,.33,.7,.279,.988
+0,.7,.76,.53,1.2,.146,.982
+0,.8,.46,.37,.4,.38,1.006
+0,.2,.39,.08,.8,.114,.99
+0,1,.9,.9,1.1,1.037,.99
+1,1,.84,.84,1.9,2.064,1.02
+0,.65,.42,.27,.5,.114,1.014
+0,1,.75,.75,1,1.322,1.004
+0,.5,.44,.22,.6,.114,.99
+1,1,.63,.63,1.1,1.072,.986
+0,1,.33,.33,.4,.176,1.01
+0,.9,.93,.84,.6,1.591,1.02
+1,1,.58,.58,1,.531,1.002
+0,.95,.32,.3,1.6,.886,.988
+1,1,.6,.6,1.7,.964,.99
+1,1,.69,.69,.9,.398,.986
+0,1,.73,.73,.7,.398,.986
+'''
+from io import StringIO
+test_sas_data = pd.read_csv(StringIO(text), delimiter=',')
+y = test_sas_data['remiss']
+X = test_sas_data.drop(['remiss'], axis=1)
+mrs = sm.Logit(y, pd.DataFrame(
+            {'const': [1] * len(y)}, index=y.index)).fit(disp=False)
+mmr = mrs = sm.GLM(y, pd.DataFrame(
+            {'const': [1] * len(y)}, index=y.index),family=sm.families.Binomial())
+mrs = sm.GLM(y, pd.DataFrame(
+            {'const': [1] * len(y)}, index=y.index),family=sm.families.Binomial()).fit(disp=False)
+
+mrs.summary2()
+dir(mrs)
+mrs.resid_dev
+mrs.resid_generalized
+mrs.resid_pearson
+mrs.resid_response
+mmr1 = sm.GLM(
+    y, sm.add_constant(X.loc[:, ['li']]),family=sm.families.Binomial())
+mrs1 = sm.GLM(
+    y, sm.add_constant(X.loc[:, ['li']]),family=sm.families.Binomial())\
+    .fit(disp=False)
+rss0 = (mrs.resid_response**2).sum()
+rss1 = (mrs1.resid_response**2).sum()
+f = (rss0-rss1)/rss1*26
+f
+
+c1 = mrs.params
+c1.loc['infil'] = 0
+h = np.mat(mmr1.hessian(c1))
+h_1 = np.linalg.inv(h)
+g = np.mat(mmr1.score(c1))
+-g*h_1*g.T

@@ -6,11 +6,7 @@ Created on Mon Jan 25 16:35:58 2021
 """
 
 import pandas as pd
-import numpy as np
 import os
-import gc
-import json
-import urllib
 # import ipykernel
 # import ntpath
 from decimal import Decimal, getcontext
@@ -22,6 +18,23 @@ os.environ['NUMEXPR_MAX_THREADS'] = '20'
 getcontext().rounding = 'ROUND_HALF_UP'
 
 Report_tuple = namedtuple('report', 'summary detail')
+
+
+def multindex_filter(df, mi_dict={}):
+    if not mi_dict:
+        return df
+    if len(set(list(mi_dict.keys())).difference(df.index.names))>0:
+        raise ValueError('Wrong Index Name')
+    idsl = df.index.nlevels * [slice(None)]
+    for k, v in mi_dict.items():
+        k_idx = list(df.index.names).index(k)
+        if isinstance(v, (slice, list)):
+            idsl[k_idx] = v
+        else:
+            idsl[k_idx] = [v]
+    if isinstance(df, pd.DataFrame):
+        return df.loc[tuple(idsl), :].copy()
+    return df.loc[tuple(idsl)].copy()
 
 
 def reduce_mem(df, **kwargs):

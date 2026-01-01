@@ -269,3 +269,111 @@ class StepwiseSelector(TransformerMixin, BaseEstimator):
         self.score_space.update({sample_space: ss})
         return self
 
+
+class StepwiseSelector(TransformerMixin, BaseEstimator):
+    """逐步回归."""
+
+    def __init__(self, p_value_in=0.05, p_value_out=0.01, criterion='aic',
+                 value_in=0.1, value_out=0.5):
+        self.p_value_in = p_value_in
+        self.p_value_out = p_value_out
+        self.criterion = criterion
+        self.value_in = value_in
+        self.value_out = value_out
+        self.score_space = {}
+
+    @FuncRunInfo(logger)
+    def fit(self, X, y):
+        """逐步回归."""
+        logger.info('Start {} fit'.format(self.__class__.__name__))
+        sign = -1 if self.criterion in ['aic', 'bic'] else 1
+        included = []
+        restricted_model = sm.Logit(y, pd.DataFrame(
+            {'const': [1] * len(y)}, index=y.index)).fit(disp=False)
+        best_f = getattr(restricted_model, self.criterion)
+        while True:
+            changed = False
+            model_exclude = None
+            model_include = None
+            # forward step
+            excluded = list(set(X.columns)-set(included))
+            for new_column in excluded:
+                model = sm.Logit(
+                    y, sm.add_constant(X.loc[:, included+[new_column]]))\
+                    .fit(disp=False)
+                if any(model.pvalues.iloc[1:] > self.p_value_in):
+                    continue
+                fvalue = getattr(model, self.criterion)
+                if (fvalue - best_f) * sign > self.value_in:
+                    best_f = fvalue
+                    model_include = new_column
+                    changed = True
+
+            if model_include is not None:
+                print('Add  {:30} with {} {:.6}'
+                      .format(model_include, self.criterion, best_f))
+                included.append(model_include)
+
+            if len(included) == 1:
+                continue
+            # backward step
+            full_model = sm.Logit(
+                y, sm.add_constant(X.loc[:, included])).fit(disp=False)
+            best_f = getattr(full_model, self.criterion)
+            for ori_column in included:
+                t_col = [x for x in included if x != ori_column]
+                model = sm.Logit(y, sm.add_constant(X.loc[:, t_col]))\
+                    .fit(disp=False)
+                if any(model.pvalues.iloc[1:] > self.p_value_out):
+                    continue
+                fvalue = getattr(model, self.criterion)
+                if (best_f - fvalue) * sign < self.value_out:
+                    best_f = fvalue
+                    model_exclude = ori_column
+                    changed = True
+            if model_exclude is not None:
+                print('Drop {:30} with {} {:.6}'
+                      .format(model_exclude, self.criterion, best_f))
+                included.remove(model_exclude)
+
+            if not changed:
+                break
+        self.final_model = sm.Logit(
+            y, sm.add_constant(X.loc[:, included])).fit(disp=False)
+        self.VIFs = {key: vif_func(X.loc[:, included].values, i)
+                     for i, key in enumerate(included)}
+        return self
+
+    def predict(self, X):
+        """预测结果."""
+        return self.final_model.predict(
+            sm.add_constant(X).loc[:, self.final_model.model.exog_names])
+
+    def transform(self, X):
+        """与预测方式相同."""
+        return self.final_model.predict(
+            sm.add_constant(X).loc[:, self.final_model.model.exog_names])
+
+    def score(self, X, y, bins=20):
+        """评估模型性能."""
+        pred = self.predict(X)
+        KS_val = calc_ks(y, pred)
+        AUC_val = calc_auc(y, pred)
+        gain_tab = gen_gaintable(y, pred, bins=bins)
+        s_ = namedtuple('Score', 'KS AUC Gain_Tab')
+        return s_(KS_val, AUC_val, gain_tab)
+
+    def set_score(self, sample_space='Train', **kwargs):
+        """记录模型评价结果."""
+        ssc = ['Train', 'OOS', 'OOT']
+        if sample_space not in ssc:
+            raise ValueError('Sample space must in {}'.format(str(ssc)))
+        score_vars = ['KS', 'AUC', 'Gain_Tab']
+        inter_score_vars = set(score_vars).intersection(kwargs.keys())
+        if len(inter_score_vars) <= 0:
+            raise ValueError('Scores must in {}'.format(str(score_vars)))
+        ss = {}
+        _ = [ss.update({key: val}) for key, val in kwargs.items()
+             if key in inter_score_vars]
+        self.score_space.update({sample_space: ss})
+        return self

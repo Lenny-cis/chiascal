@@ -36,7 +36,7 @@ def concentration_ratio(ser):
     """计算集中度."""
     if ser.isna().all():
         return np.nan
-    max_val = stats.mode(ser.dropna(), nan_policy='omit', keepdims=False)[1]
+    max_val = stats.mode(ser.dropna(), nan_policy='omit')[1][0]
     return max_val / ser.shape[0]
 
 
