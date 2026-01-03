@@ -79,7 +79,7 @@ y_oot = multindex_filter(y_data, {'split': "t02_OOT"})
 
 ss1 = StatsSelector(nomissing=0.05, noconcentration=0.05, nunique=0, IV=0.01)
 ps1 = PSISelector(psi=0.1, n_jobs=-1)
-cg1 = CorrGraphSelector(corr=0.4, method='spearman')
+cg1 = CorrGraphSelector(corr=0.4, method='pearson')
 cb1 = Combiner(
     cut_cnt=50, min_PCT=0.025, min_n=None,
     max_bin_cnt=6, I_min=3, U_min=4, cut_method='eqqt',
@@ -87,10 +87,10 @@ cb1 = Combiner(
     variable_shape='IDU', modify=True)
 
 sw1 = StepwiseSelector(
-    p_value_in=0.05, p_value_out=0.01, criterion='aic',
+    p_value_in=0.05, p_value_out=0.1, criterion='aic',
     value_in=0.1, value_out=0.5)
 pl = Pipeline([('statssel', ss1), ('psisel', ps1), ('corrgraphsel', cg1), ('combinersel', cb1), ('stepwisesel', sw1)])
-pl.fit(X_trn, y_trn, psisel__rep_X=X_tst, corrgraphsel__iv_func=ss1.get_IVs)
+pl.fit(X_trn, y_trn, psisel__rep_X=X_tst, corrgraphsel__iv_func=ss1.get_IVs, stepwisesel__verbose=False)
 trn_score = pl.score(X_trn, y_trn)
 tst_score = pl.score(X_tst, y_tst)
 oot_score = pl.score(X_oot, y_oot)
@@ -130,35 +130,118 @@ remiss,cell,smear,infil,li,blast,temp
 0,1,.73,.73,.7,.398,.986
 '''
 from io import StringIO
+import statsmodels.api as sm
+import scipy as sp
 test_sas_data = pd.read_csv(StringIO(text), delimiter=',')
 y = test_sas_data['remiss']
 X = test_sas_data.drop(['remiss'], axis=1)
-mrs = sm.Logit(y, pd.DataFrame(
-            {'const': [1] * len(y)}, index=y.index)).fit(disp=False)
-mmr = mrs = sm.GLM(y, pd.DataFrame(
-            {'const': [1] * len(y)}, index=y.index),family=sm.families.Binomial())
-mrs = sm.GLM(y, pd.DataFrame(
-            {'const': [1] * len(y)}, index=y.index),family=sm.families.Binomial()).fit(disp=False)
-
-mrs.summary2()
-dir(mrs)
-mrs.resid_dev
-mrs.resid_generalized
-mrs.resid_pearson
-mrs.resid_response
-mmr1 = sm.GLM(
-    y, sm.add_constant(X.loc[:, ['li']]),family=sm.families.Binomial())
-mrs1 = sm.GLM(
-    y, sm.add_constant(X.loc[:, ['li']]),family=sm.families.Binomial())\
-    .fit(disp=False)
-rss0 = (mrs.resid_response**2).sum()
-rss1 = (mrs1.resid_response**2).sum()
-f = (rss0-rss1)/rss1*26
-f
-
-c1 = mrs.params
-c1.loc['infil'] = 0
-h = np.mat(mmr1.hessian(c1))
-h_1 = np.linalg.inv(h)
-g = np.mat(mmr1.score(c1))
--g*h_1*g.T
+sw2 = StepwiseSelector(
+    p_value_in=0.35, p_value_out=0.3, criterion='aic',
+    value_in=0.1, value_out=0.5)
+sw2.fit(X, y, verbose=True)
+#X_const = sm.add_constant(X)
+#slentry = 0.3
+#slstay = 0.31
+#included = ['const']
+#clf_0_X = X_const.loc[:, included]
+#clf_0 = sm.GLM(y, X_const.loc[:, ['const']],family=sm.families.Binomial())
+#
+#def forward(clf_0, X_const, slentry):
+#    from dataclasses import dataclass, asdict
+#    
+#    @dataclass(order=True)
+#    class chi2_score:
+#        chi_square: float
+#        p_value: float
+#        name: str
+#    
+#    def ptest_score_chi_square(clf_res_0, new_col, X_const):
+#        from scipy.stats import chi2
+#        print(list(clf_res_0.params.index)+[new_col])
+#        clf_1 = sm.GLM(y, X_const.loc[:, list(clf_res_0.params.index)+[new_col]],
+#                       family=sm.families.Binomial())
+#        p0 = clf_res_0.params
+#        p0.loc[list(set(clf_1.exog_names)-set(clf_res_0.params.index))[0]] = 0
+#        H = np.mat(clf_1.hessian(p0))
+#        H_i = np.linalg.inv(H)
+#        g = np.mat(clf_1.score(p0))
+#        chi_s = (-g*H_i*g.T)[0, 0]
+#        p = 1 - chi2.cdf(chi_s, 1)
+#        return chi2_score(chi_s, p, new_col)
+#    included = clf_0.exog_names
+#    excluded = list(set(X_const.columns)-set(included))
+#    clf_res_0 = clf_0.fit(disp=False)
+#    AEEE = [ptest_score_chi_square(clf_res_0, x, X_const) for x in excluded]
+#    AEEE.sort(reverse=True)
+#    if AEEE[0].p_value >= slentry:
+#        return clf_0
+#
+#    included.append(AEEE[0].name)
+#    clf_1_X = X_const.loc[:, included]
+#    clf_1 = sm.GLM(y, clf_1_X ,family=sm.families.Binomial())
+#    return clf_1
+#
+#def backward(clf_0, slstay):
+#    clf_res_0 = clf_0.fit(disp=False)
+#    included = clf_0.exog_names
+#    pvalues = clf_res_0.pvalues.iloc[1:].sort_values(ascending=False)
+#    if pvalues.iloc[0] <= slstay:
+#        return clf_0
+#    
+#    included.remove(pvalues.index[0])
+#    clf_1_X = X_const.loc[:, included]
+#    clf_1 = sm.GLM(y, clf_1_X ,family=sm.families.Binomial())
+#    return clf_1
+#    
+#clf_0 = forward(clf_0, X_const, slentry)
+#slstay = 0.2
+#clf_0 = backward(clf_0, slstay)
+#clf_0.fit(disp=False).summary2()
+#
+#pvalues = clf_res_0.pvalues.iloc[1:].sort_values(ascending=False)
+#if pvalues.iloc[0] >= slstay:
+#    included.remove(pvalues.index[0])
+#
+#mrs = sm.Logit(y, pd.DataFrame(
+#            {'const': [1] * len(y)}, index=y.index)).fit(disp=False)
+#mmr = mrs = sm.GLM(y, pd.DataFrame(
+#            {'const': [1] * len(y)}, index=y.index),family=sm.families.Binomial())
+#mrs = sm.GLM(y, pd.DataFrame(
+#            {'const': [1] * len(y)}, index=y.index),family=sm.families.Binomial()).fit(disp=False)
+#
+#mrs.summary2()
+#dir(mrs)
+#mrs.resid_dev
+#mrs.resid_generalized
+#mrs.resid_pearson
+#mrs.resid_response
+#mmr1 = sm.GLM(
+#    y, sm.add_constant(X.loc[:, ['li']]),family=sm.families.Binomial())
+#mrs1 = sm.GLM(
+#    y, sm.add_constant(X.loc[:, ['li']]),family=sm.families.Binomial())\
+#    .fit(disp=False)
+#rss0 = (mrs.resid_response**2).sum()
+#rss1 = (mrs1.resid_response**2).sum()
+#f = (rss0-rss1)/rss1*26
+#f
+#
+#c1 = mrs.params
+#c1.loc['infil'] = 0
+#h = np.mat(mmr1.hessian(c1))
+#h_1 = np.linalg.inv(h)
+#g = np.mat(mmr1.score(c1))
+#-g*h_1*g.T
+#
+#from dataclasses import dataclass, asdict
+#
+#@dataclass(order=True)
+#class Employee:
+#    name: str
+#    salary: int
+#    department: str = "Engineering"
+#
+#e1=Employee("Alice",85000)
+#e2=Employee("Bob",92000)
+#e3=Employee("Charlie",85000,"Marketing")
+#print(e1<e2)#True-按字设顺序t比较(name,salary,department)
+#print(sorted([e2,e1,e3]))

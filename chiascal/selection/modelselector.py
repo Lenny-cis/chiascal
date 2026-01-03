@@ -283,74 +283,110 @@ class StepwiseSelector(TransformerMixin, BaseEstimator):
         self.score_space = {}
 
     @FuncRunInfo(logger)
-    def fit(self, X, y):
+    def fit(self, X, y, verbose=False):
         """逐步回归."""
+        def forward(clf_0, X_const, slentry, verbose=verbose):
+            nonlocal changed
+            from dataclasses import dataclass, asdict
+            
+            @dataclass(order=True)
+            class chi2_score:
+                chi_square: float
+                p_value: float
+                name: str
+            
+            def ptest_score_chi_square(clf_res_0, new_col, X_const):
+                from scipy.stats import chi2
+                clf_1_col = list(clf_res_0.model.exog_names)+[new_col]
+                clf_1 = sm.GLM(y, X_const.loc[:, clf_1_col],
+                               family=sm.families.Binomial())
+                p0 = clf_res_0.params
+                p0.loc[new_col] = 0
+                H = np.mat(clf_1.hessian(p0))
+                H_i = np.linalg.inv(H)
+                g = np.mat(clf_1.score(p0))
+                chi_s = (-g*H_i*g.T)[0, 0]
+                p = 1 - chi2.cdf(chi_s, 1)
+                return chi2_score(chi_s, p, new_col)
+    
+            included = clf_0.exog_names
+            excluded = list(set(X_const.columns)-set(included))
+            clf_res_0 = clf_0.fit(disp=False)
+            AEEE = [ptest_score_chi_square(clf_res_0, x, X_const) for x in excluded]
+            AEEE.sort(reverse=True)
+            if AEEE[0].p_value >= slentry:
+                return clf_0
+            
+            changed = True
+            included.append(AEEE[0].name)
+            logger.info('Add {:30} with chiSquare {:.6}'
+                        .format(AEEE[0].name, AEEE[0].chi_square))
+            if verbose:
+                logger.info(pd.DataFrame([asdict(x) for x in AEEE]))
+            clf_1_X = X_const.loc[:, included]
+            clf_1 = sm.GLM(y, clf_1_X ,family=sm.families.Binomial())
+            return clf_1
+
+        def backward(clf_0, slstay, verbose=verbose):
+            nonlocal changed
+            included = clf_0.exog_names
+            clf_res_0 = clf_0.fit(disp=False)
+            pvalues = clf_res_0.pvalues.iloc[1:].sort_values(ascending=False)
+            if pvalues.iloc[0] <= slstay:
+                return clf_0
+
+            changed = True
+            logger.info('Drop {:30} with pvalue {:.6}'
+                        .format(pvalues.index[0], pvalues.iloc[0]))
+            included.remove(pvalues.index[0])
+            clf_1_X = X_const.loc[:, included]
+            clf_1 = sm.GLM(y, clf_1_X ,family=sm.families.Binomial())
+            return clf_1
+
         logger.info('Start {} fit'.format(self.__class__.__name__))
-        sign = -1 if self.criterion in ['aic', 'bic'] else 1
-        included = []
-        restricted_model = sm.Logit(y, pd.DataFrame(
-            {'const': [1] * len(y)}, index=y.index)).fit(disp=False)
-        best_f = getattr(restricted_model, self.criterion)
+        included = ['const']
+        X_const = sm.add_constant(X)
+        clf_0_X = X_const.loc[:, included]
+        clf_0 = sm.GLM(y, clf_0_X,family=sm.families.Binomial())
+        clf_res_0 = clf_0.fit(disp=False)
+
         while True:
             changed = False
-            model_exclude = None
-            model_include = None
             # forward step
-            excluded = list(set(X.columns)-set(included))
-            for new_column in excluded:
-                model = sm.Logit(
-                    y, sm.add_constant(X.loc[:, included+[new_column]]))\
-                    .fit(disp=False)
-                if any(model.pvalues.iloc[1:] > self.p_value_in):
-                    continue
-                fvalue = getattr(model, self.criterion)
-                if (fvalue - best_f) * sign > self.value_in:
-                    best_f = fvalue
-                    model_include = new_column
-                    changed = True
+            clf_0 = forward(clf_0, X_const, self.p_value_in, verbose=verbose)
+            clf_res_0 = clf_0.fit(disp=False)
+            included = clf_0.exog_names
+            if verbose:
+                logger.info(clf_res_0.summary2())
 
-            if model_include is not None:
-                print('Add  {:30} with {} {:.6}'
-                      .format(model_include, self.criterion, best_f))
-                included.append(model_include)
-
-            if len(included) == 1:
-                continue
             # backward step
-            full_model = sm.Logit(
-                y, sm.add_constant(X.loc[:, included])).fit(disp=False)
-            best_f = getattr(full_model, self.criterion)
-            for ori_column in included:
-                t_col = [x for x in included if x != ori_column]
-                model = sm.Logit(y, sm.add_constant(X.loc[:, t_col]))\
-                    .fit(disp=False)
-                if any(model.pvalues.iloc[1:] > self.p_value_out):
-                    continue
-                fvalue = getattr(model, self.criterion)
-                if (best_f - fvalue) * sign < self.value_out:
-                    best_f = fvalue
-                    model_exclude = ori_column
-                    changed = True
-            if model_exclude is not None:
-                print('Drop {:30} with {} {:.6}'
-                      .format(model_exclude, self.criterion, best_f))
-                included.remove(model_exclude)
+            b_ = any(clf_res_0.pvalues.iloc[1:] >= self.p_value_out)
+            logger.info(b_)
+            while b_:
+                clf_0 = backward(clf_0, self.p_value_out, verbose=verbose)
+                clf_res_0 = clf_0.fit(disp=False)
+                b_ = any(clf_res_0.pvalues.iloc[1:] >= self.p_value_out)
 
             if not changed:
                 break
-        self.final_model = sm.Logit(
-            y, sm.add_constant(X.loc[:, included])).fit(disp=False)
+        self.final_model = clf_res_0
+        included = [x for x in included if x!='const']
+        if len(included) == 1:
+            self.VIFs = {k: 1 for k in included}
+            return self
         self.VIFs = {key: vif_func(X.loc[:, included].values, i)
                      for i, key in enumerate(included)}
         return self
 
     def predict(self, X):
         """预测结果."""
+        logger.info('Start {} fit'.format(self.__class__.__name__))
         return self.final_model.predict(
             sm.add_constant(X).loc[:, self.final_model.model.exog_names])
 
     def transform(self, X):
         """与预测方式相同."""
+        logger.info('Start {} fit'.format(self.__class__.__name__))
         return self.final_model.predict(
             sm.add_constant(X).loc[:, self.final_model.model.exog_names])
 
