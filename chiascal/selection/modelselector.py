@@ -283,7 +283,7 @@ class StepwiseSelector(TransformerMixin, BaseEstimator):
         self.score_space = {}
 
     @FuncRunInfo(logger)
-    def fit(self, X, y, verbose=False):
+    def fit(self, X, y, freq_weights=None, verbose=False):
         """逐步回归."""
         def forward(clf_0, X_const, slentry, verbose=verbose):
             nonlocal changed
@@ -299,6 +299,7 @@ class StepwiseSelector(TransformerMixin, BaseEstimator):
                 from scipy.stats import chi2
                 clf_1_col = list(clf_res_0.model.exog_names)+[new_col]
                 clf_1 = sm.GLM(y, X_const.loc[:, clf_1_col],
+                               freq_weights=freq_weights,
                                family=sm.families.Binomial())
                 p0 = clf_res_0.params
                 p0.loc[new_col] = 0
@@ -324,7 +325,8 @@ class StepwiseSelector(TransformerMixin, BaseEstimator):
             if verbose:
                 logger.info(pd.DataFrame([asdict(x) for x in AEEE]))
             clf_1_X = X_const.loc[:, included]
-            clf_1 = sm.GLM(y, clf_1_X ,family=sm.families.Binomial())
+            clf_1 = sm.GLM(y, clf_1_X, freq_weights=freq_weights,
+                           family=sm.families.Binomial())
             return clf_1
 
         def backward(clf_0, slstay, verbose=verbose):
@@ -340,14 +342,16 @@ class StepwiseSelector(TransformerMixin, BaseEstimator):
                         .format(pvalues.index[0], pvalues.iloc[0]))
             included.remove(pvalues.index[0])
             clf_1_X = X_const.loc[:, included]
-            clf_1 = sm.GLM(y, clf_1_X ,family=sm.families.Binomial())
+            clf_1 = sm.GLM(y, clf_1_X, freq_weights=freq_weights,
+                           family=sm.families.Binomial())
             return clf_1
 
         logger.info('Start {} fit'.format(self.__class__.__name__))
         included = ['const']
         X_const = sm.add_constant(X)
         clf_0_X = X_const.loc[:, included]
-        clf_0 = sm.GLM(y, clf_0_X,family=sm.families.Binomial())
+        clf_0 = sm.GLM(y, clf_0_X, freq_weights=freq_weights,
+                       family=sm.families.Binomial())
         clf_res_0 = clf_0.fit(disp=False)
 
         while True:

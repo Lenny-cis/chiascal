@@ -27,7 +27,7 @@ class CorrGraphSelector(TransformerMixin, BaseEstimator):
         self.method = method
 
     @FuncRunInfo(logger)
-    def fit(self, X, y=None, iv_func=None):
+    def fit(self, X, y=None, iv_func=None, topn=3):
         """训练."""
         logger.info('Start {} fit'.format(self.__class__.__name__))
         num_vars = [name for name, dtp in X.dtypes.items()
@@ -48,6 +48,10 @@ class CorrGraphSelector(TransformerMixin, BaseEstimator):
         res_var = [sorted(nx.get_node_attributes(
             corr_g.subgraph(comp), 'ivval').items(), key=lambda x: x[1],
             reverse=True)[0][0] for comp in conn_comps]
+        res_var = []
+        _ = [res_var.extend(list(map(lambda x: x[0], sorted(nx.get_node_attributes(
+            corr_g.subgraph(comp), 'ivval').items(), key=lambda x: x[1],
+            reverse=True)[:topn]))) for comp in conn_comps]
         res_var.extend(X.columns.difference(num_vars))
         self.input_vars = X.columns.tolist()
         self.output_vars = res_var

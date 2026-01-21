@@ -14,12 +14,13 @@ from sklearn.utils import shuffle
 from sklearn.pipeline import Pipeline
 
 
-src_path = os.path.split(os.getcwd())[0]
+src_path = os.path.abspath(r'/home/Lenny/risk_code/chiascal')
 sys.path.append(src_path)
 from chiascal.utils import make_x_y
 from chiascal.selection import StatsSelector, PSISelector, StepwiseSelector
 from chiascal.transform import Combiner
 from chiascal.collinear import CorrGraphSelector
+from chiascal.collinear.varcluscust import VarClusCust
 
 
 def shuffle_test_data(df):
@@ -70,6 +71,7 @@ I_COL = '客户名称'
 test_data.set_index(I_COL, inplace=True)
 test_data = split_train_test_oot(test_data, Y_COL)
 X_data, y_data = make_x_y(test_data, Y_COL)
+print(y_data.sum()/y_data.count())
 X_trn = multindex_filter(X_data, {'split': "t00_Train"})
 X_tst = multindex_filter(X_data, {'split': "t01_Test"})
 X_oot = multindex_filter(X_data, {'split': "t02_OOT"})
@@ -77,9 +79,11 @@ y_trn = multindex_filter(y_data, {'split': "t00_Train"})
 y_tst = multindex_filter(y_data, {'split': "t01_Test"})
 y_oot = multindex_filter(y_data, {'split': "t02_OOT"})
 
+
 ss1 = StatsSelector(nomissing=0.05, noconcentration=0.05, nunique=0, IV=0.01)
 ps1 = PSISelector(psi=0.1, n_jobs=-1)
-cg1 = CorrGraphSelector(corr=0.4, method='pearson')
+#cg1 = CorrGraphSelector(corr=0.4, method='pearson')
+cg1 = VarClusCust(maxeigval2=0.5)
 cb1 = Combiner(
     cut_cnt=50, min_PCT=0.025, min_n=None,
     max_bin_cnt=6, I_min=3, U_min=4, cut_method='eqqt',
@@ -89,12 +93,18 @@ cb1 = Combiner(
 sw1 = StepwiseSelector(
     p_value_in=0.05, p_value_out=0.1, criterion='aic',
     value_in=0.1, value_out=0.5)
-pl = Pipeline([('statssel', ss1), ('psisel', ps1), ('corrgraphsel', cg1), ('combinersel', cb1), ('stepwisesel', sw1)])
-pl.fit(X_trn, y_trn, psisel__rep_X=X_tst, corrgraphsel__iv_func=ss1.get_IVs, stepwisesel__verbose=False)
-trn_score = pl.score(X_trn, y_trn)
-tst_score = pl.score(X_tst, y_tst)
-oot_score = pl.score(X_oot, y_oot)
-
+pl = Pipeline([('statssel', ss1), ('psisel', ps1), ('combinersel', cb1), ('corrgraphsel', cg1)])
+#pl.fit(X_trn, y_trn, psisel__rep_X=X_tst, corrgraphsel__iv_func=ss1.get_IVs, stepwisesel__verbose=False)
+woe_X_trn = pl.fit_transform(X_trn, y_trn, psisel__rep_X=X_tst)
+woe_X_tst = pl.transform(X_tst)
+woe_X_oot = pl.transform(X_oot)
+_weight = y_trn.map(lambda x: 1 if x==0 else 4)
+_weight = None
+sw1.fit(woe_X_trn, y_trn, verbose=False, freq_weights=_weight)
+trn_score = sw1.score(woe_X_trn, y_trn)
+tst_score = sw1.score(woe_X_tst, y_tst)
+oot_score = sw1.score(woe_X_oot, y_oot)
+print(sw1.final_model.params)
 print(trn_score.KS, trn_score.AUC)
 print(tst_score.KS, tst_score.AUC)
 print(oot_score.KS, oot_score.AUC)
@@ -245,3 +255,35 @@ sw2.fit(X, y, verbose=True)
 #e3=Employee("Charlie",85000,"Marketing")
 #print(e1<e2)#True-按字设顺序t比较(name,salary,department)
 #print(sorted([e2,e1,e3]))
+# %%
+import xgboost as xgb
+from chiascal.utils.metrics import calc_ks, calc_auc
+
+p_ = {'max_depth': 2,
+      'learning_rate': 0.1,
+      'eval_metric': 'auc',
+      'subsample': 0.8,
+      'colsample_bytree': 0.8,
+      'importance_type': 'total_gain',
+      'min_child_weight': 8,
+      'gamma': 0.3,
+      'reg_alpha': 0.1,
+      'reg_lambda': 0.1,
+      'n_estimators': 300}
+
+clf = xgb.XGBClassifier(**p_)
+clf.fit(X_trn, y_trn, early_stopping_rounds=30, eval_set=[(X_tst, y_tst)])
+print(calc_ks(y_trn, clf.predict_proba(X_trn, ntree_limit=clf.best_iteration)[:, 1]))
+print(calc_ks(y_tst, clf.predict_proba(X_tst, ntree_limit=clf.best_iteration)[:, 1]))
+print(calc_ks(y_trn, clf.predict_proba(X_trn)[:, 1]))
+
+rules_get = xbgtree_to_rules(clf.get_booster())
+data_train = pd.concat([X_trn, y_trn], axis=1)
+rules_get_need = rule_optimize(data_train,
+                                    rules_get,'flag'
+                                   ,min_single_lift=0  #独立规则最小lift值 
+                                   ,min_current_lift = 0 #在已有规则作用后，当前规则最小lift值
+                                   )[2]
+rules_get_need = [rule['name'] for rule in rules_get_need ]
+print(rules_get_need )
+dl = rule_analysis(data_train,rules_get,'flag')[0]

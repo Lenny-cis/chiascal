@@ -428,14 +428,12 @@ def gen_cut(ser, **kwargs):
     nunique = ser.nunique()
     if isinstance(sdtype, pd.CategoricalDtype):
         return gen_cut_discrete(ser)
-    if pd.api.types.is_float_dtype(sdtype) or nunique > 20:
+    if nunique > kwargs.get('n', 20):  
         summ_kw = {key: val for key, val in kwargs.items()
                    if key in ['n', 'method', 'precision']}
         return gen_cut_summ(ser, **summ_kw)
-    if pd.api.types.is_integer_dtype(sdtype):
-        return gen_cut_count(ser)
-    if isinstance(sdtype, pd.CategoricalDtype):
-        return gen_cut_discrete(ser)
+    return gen_cut_count(ser)
+
 
 
 def gen_cut_summ(ser, n=10, method='eqqt', precision=6):
@@ -461,7 +459,10 @@ def gen_cut_summ(ser, n=10, method='eqqt', precision=6):
     elif method == 'eqdist':
         cut = list(np.unique(pd.cut(ser, n, retbins=True, duplicates='drop',
                                     precision=precision)[1].round(precision)))
-    cut[0] = -np.inf
+    if len(cut) < n+1:
+        cut.insert(0, -np.inf)
+    else:
+        cut[0] = -np.inf
     cut[-1] = np.inf
     return cut
 
@@ -471,7 +472,7 @@ def gen_cut_count(ser):
     rcut = list(sorted(ser.dropna().unique()))
     if len(rcut) <= 1:
         return [-np.inf, np.inf]
-    rcut[0] = -np.inf
+    rcut.insert(0, -np.inf)
     rcut[-1] = np.inf
     return rcut
 
